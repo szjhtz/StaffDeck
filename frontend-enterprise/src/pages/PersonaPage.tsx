@@ -1,5 +1,5 @@
 import { SaveOutlined, UserOutlined } from '@ant-design/icons';
-import { Alert, Button, Card, Form, Input, Switch, Typography, message } from 'antd';
+import { Button, Card, Form, Input, Switch, Typography, message } from 'antd';
 import { useEffect, useState } from 'react';
 import { api, TENANT_ID } from '../api/client';
 import type { PersonaRead, UIConfigRead } from '../types';
@@ -72,12 +72,6 @@ export default function PersonaPage() {
         <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={save}>保存</Button>
       </div>
       <Card className="editor-card" title={<><UserOutlined /> System Prompt</>}>
-        <Alert
-          type="info"
-          showIcon
-          message="这里配置的是租户级人设，会作为回复生成阶段的 system prompt 注入模型。"
-          style={{ marginBottom: 16 }}
-        />
         <Form form={form} layout="vertical">
           <Form.Item name="system_prompt" label="人设 Prompt" rules={[{ required: true }]}>
             <Input.TextArea className="persona-editor" rows={12} />
@@ -86,12 +80,6 @@ export default function PersonaPage() {
         {updatedAt && <Typography.Text type="secondary">最后更新：{updatedAt}</Typography.Text>}
       </Card>
       <Card className="editor-card settings-card" title="用户端展示设置">
-        <Alert
-          type="info"
-          showIcon
-          message="这里控制用户端聊天中是否展示处理轨迹。Memory 只用于内部召回和总结，不会外显给用户。"
-          style={{ marginBottom: 16 }}
-        />
         <Form
           form={uiForm}
           layout="vertical"
