@@ -20,9 +20,11 @@ class StepAgent:
         model_config: ModelConfig,
         router_decision: RouterDecision | None = None,
         repair_context: dict[str, object] | None = None,
+        recent_messages: list[dict[str, str]] | None = None,
     ) -> StepAgentResult:
         payload = {
             "user_message": message,
+            "recent_messages": recent_messages or [],
             "active_skill": skill.content_json if skill else None,
             "active_step": _active_step(skill, session.active_step_id),
             "router_decision": router_decision.model_dump() if router_decision else None,

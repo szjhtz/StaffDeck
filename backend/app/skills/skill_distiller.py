@@ -40,6 +40,10 @@ ADAPTIVE_STEP_INSTRUCTION_SUFFIX = (
     "将本步骤作为目标而不是固定话术；如果用户当前消息、历史 slots 或路由意图已满足本步骤，"
     "直接写入对应 slot 并继续到下一缺失信息、工具调用或最终回复，不要重复确认。"
 )
+NUMERIC_EXTRACTION_INSTRUCTION = (
+    "数值字段需要理解口语数字和量词表达，例如“一个/一件/一台/一次”表示 1，"
+    "“两个/两件”表示 2，“三份/3个”表示 3。"
+)
 
 
 class SkillDistiller:
@@ -230,6 +234,7 @@ class SkillDistiller:
                         f"询问并记录完成该流程所需的信息：{labels}。如果用户一次提供多个信息，"
                         "需要同时提取并写入对应 slot，不要重复追问已提供的信息；"
                         "如果信息已经满足，直接推进到下一缺失信息、工具调用或最终回复；"
+                        f"{NUMERIC_EXTRACTION_INSTRUCTION}"
                         f"{ADAPTIVE_STEP_INSTRUCTION_SUFFIX}"
                     ),
                     expected_user_info=required_info,

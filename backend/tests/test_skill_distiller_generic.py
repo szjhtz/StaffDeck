@@ -125,3 +125,15 @@ def test_normalize_response_turns_steps_into_adaptive_goals() -> None:
     assert response.draft_skill.slot_filling_policy["multi_slot_per_turn"] is True
     assert response.draft_skill.slot_filling_policy["skip_satisfied_steps"] is True
     assert all("目标而不是固定话术" in step.instruction for step in response.draft_skill.steps)
+
+
+def test_fallback_card_instructs_numeric_phrase_extraction() -> None:
+    request = SkillDistillRequest(
+        tenant_id="tenant_demo",
+        title="预约服务",
+        raw_content="获取用户姓名，确认预约人数，创建预约记录并反馈给用户",
+    )
+
+    card = SkillDistiller()._fallback_card(request)  # noqa: SLF001
+
+    assert any("一个/一件/一台" in step.instruction for step in card.steps)

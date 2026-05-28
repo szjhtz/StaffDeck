@@ -114,6 +114,70 @@ EXCHANGE_SKILL = {
     "response_rules": ["不要承诺一定能换货。", "如政策不确定，应转人工确认。", ADAPTIVE_FLOW_RULE],
 }
 
+PURCHASE_SKILL = {
+    "skill_id": "skill_purchase_001",
+    "name": "购买商品流程",
+    "version": "1.0.0",
+    "business_domain": "commerce",
+    "description": "引导用户完成商品购买流程，包括收集用户信息、确认商品、生成订单并反馈结果。",
+    "trigger_intents": ["购买商品", "下单", "买东西", "购买", "place_order"],
+    "user_utterance_examples": ["我想买这个商品", "帮我下单", "我要购买 A1", "我要买一个a1"],
+    "goal": ["获取用户身份信息", "确认购买的商品及数量", "生成有效订单", "向用户反馈订单号及状态"],
+    "required_info": ["user_name", "product_id", "quantity"],
+    "slot_filling_policy": {
+        "enabled": True,
+        "multi_slot_per_turn": True,
+        "extract_scope": "all_skill_expected_user_info",
+        "skip_satisfied_steps": True,
+        "description": "每轮同时抽取用户已表达的姓名、商品 ID、购买数量等信息；数量需理解口语数字和量词表达，已满足的信息不再追问。",
+        "target_info": ["user_name", "product_id", "quantity"],
+    },
+    "steps": [
+        {
+            "step_id": "collect_user_name",
+            "name": "收集用户信息与商品详情",
+            "instruction": (
+                "将本步骤作为目标而不是固定话术；同时收集用户姓名、商品 ID 和数量。"
+                "用户一句话提供多个信息时必须一次性写入 slot_updates；"
+                "数值字段需要理解口语数字和量词表达，例如“一个/一件/一台”表示 1，“两个/两件”表示 2，“三份/3个”表示 3。"
+                "已提供的信息不再追问，只追问真正缺失的信息；全部满足后直接进入订单创建。"
+            ),
+            "expected_user_info": ["user_name", "product_id", "quantity"],
+            "allowed_actions": ["ask_user", "continue_flow"],
+        },
+        {
+            "step_id": "confirm_product",
+            "name": "执行购买/创建订单",
+            "instruction": (
+                "将本步骤作为目标而不是固定话术；当 user_name、product_id、quantity 已满足时，"
+                "直接调用 product.purchase 或 order.add 创建订单，不要重复确认商品或数量。"
+                "如果工具需要 user_id 且只有 user_name，可将 user_name 作为 user_id。"
+            ),
+            "expected_user_info": ["product_id", "quantity"],
+            "allowed_actions": ["continue_flow", "call_tool:product.purchase", "call_tool:order.add"],
+        },
+        {
+            "step_id": "create_order",
+            "name": "反馈订单结果",
+            "instruction": "将工具返回的订单号、商品信息、数量、金额和状态告知用户，确认购买结果；不要只说请稍候。",
+            "expected_user_info": [],
+            "allowed_actions": ["answer_user"],
+        },
+    ],
+    "interruption_policy": {
+        "related_question": "可以临时回答，回答后回到当前购买流程。",
+        "unrelated_business": "可以切换到新技能，并保存当前流程进度。",
+        "chitchat": "简短回应后，引导用户继续购买流程。",
+        "user_wants_human": "直接转人工。",
+    },
+    "response_rules": [
+        "保持语气友好、专业。",
+        "明确告知用户订单号。",
+        "若商品不存在或库存不足，需明确告知用户并建议其他操作。",
+        ADAPTIVE_FLOW_RULE,
+    ],
+}
+
 ORDER_QUERY_TOOL = {
     "name": "order.query",
     "display_name": "订单查询",
@@ -276,7 +340,7 @@ def seed_demo_data(session: Session) -> None:
             )
         )
 
-    for content in (REFUND_SKILL, EXCHANGE_SKILL):
+    for content in (REFUND_SKILL, EXCHANGE_SKILL, PURCHASE_SKILL):
         existing = session.exec(
             select(Skill).where(
                 Skill.tenant_id == "tenant_demo", Skill.skill_id == content["skill_id"]
@@ -348,6 +412,10 @@ def _sync_demo_skill_if_stale(existing: Skill, desired: dict) -> None:
             if key in desired_step and current_step.get(key) != desired_step.get(key):
                 current_step[key] = desired_step[key]
                 changed = True
+
+    if desired.get("required_info") and content.get("required_info") != desired.get("required_info"):
+        content["required_info"] = desired["required_info"]
+        changed = True
 
     if desired.get("interruption_policy") and content.get("interruption_policy") != desired.get(
         "interruption_policy"

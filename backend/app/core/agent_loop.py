@@ -1034,6 +1034,7 @@ class AgentLoop:
             model_config,
             router_decision,
             repair_context,
+            self._recent_messages(chat_session),
         )
         payload = step_result.model_dump()
         if repair_reason:
@@ -1541,6 +1542,20 @@ class AgentLoop:
         return self.db.exec(
             select(Skill).where(Skill.tenant_id == tenant_id, Skill.skill_id == skill_id)
         ).first()
+
+    def _recent_messages(self, chat_session: ChatSession, limit: int = 8) -> list[dict[str, str]]:
+        if not hasattr(self, "db"):
+            return []
+        rows = list(
+            self.db.exec(
+                select(Message)
+                .where(Message.tenant_id == chat_session.tenant_id, Message.session_id == chat_session.id)
+                .order_by(Message.created_at.desc())
+                .limit(limit)
+            ).all()
+        )
+        rows.reverse()
+        return [{"role": row.role, "content": row.content} for row in rows]
 
     def _append_message(self, tenant_id: str, session_id: str, role: str, content: str) -> None:
         self.db.add(Message(tenant_id=tenant_id, session_id=session_id, role=role, content=content))
