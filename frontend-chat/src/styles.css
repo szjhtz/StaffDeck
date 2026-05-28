@@ -93,6 +93,10 @@ textarea,
   overflow: hidden;
 }
 
+.chat-layout.sidebar-collapsed {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
 .session-pane {
   min-width: 0;
   height: 100vh;
@@ -106,6 +110,12 @@ textarea,
   backdrop-filter: blur(18px) saturate(1.2);
 }
 
+.chat-layout.sidebar-collapsed .session-pane {
+  padding: 12px 8px;
+  align-items: center;
+  overflow-x: hidden;
+}
+
 .sidebar-head {
   min-height: 48px;
   display: flex;
@@ -115,10 +125,23 @@ textarea,
   margin-bottom: 4px;
 }
 
+.chat-layout.sidebar-collapsed .sidebar-head {
+  min-height: 0;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
 .sidebar-actions {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.chat-layout.sidebar-collapsed .sidebar-actions,
+.chat-layout.sidebar-collapsed .sidebar-head .ant-space {
+  flex-direction: column;
+  gap: 6px !important;
 }
 
 .brand-block {
@@ -126,6 +149,17 @@ textarea,
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.chat-layout.sidebar-collapsed .brand-block {
+  justify-content: center;
+}
+
+.chat-layout.sidebar-collapsed .brand-block > div,
+.chat-layout.sidebar-collapsed .session-section-label,
+.chat-layout.sidebar-collapsed .session-summary,
+.chat-layout.sidebar-collapsed .session-actions {
+  display: none;
 }
 
 .brand-mark {
@@ -215,6 +249,15 @@ textarea,
   box-shadow: none;
 }
 
+.chat-layout.sidebar-collapsed .session-card {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+}
+
 .session-card:hover,
 .session-card.active {
   background: var(--surface-muted);
@@ -227,6 +270,11 @@ textarea,
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+
+.chat-layout.sidebar-collapsed .session-card-content,
+.chat-layout.sidebar-collapsed .session-meta {
+  display: block;
 }
 
 .session-meta {
@@ -251,6 +299,17 @@ textarea,
   color: var(--foreground);
   font-size: 13px;
   font-weight: 740;
+}
+
+.chat-layout.sidebar-collapsed .session-title {
+  display: grid;
+  place-items: center;
+  gap: 0;
+  font-size: 0;
+}
+
+.chat-layout.sidebar-collapsed .session-title .anticon {
+  font-size: 17px;
 }
 
 .session-summary {
@@ -686,11 +745,11 @@ textarea,
 
 @media (max-width: 860px) {
   .chat-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(168px, 42vw) minmax(0, 1fr);
   }
 
-  .session-pane {
-    display: none;
+  .chat-layout.sidebar-collapsed {
+    grid-template-columns: 64px minmax(0, 1fr);
   }
 
   .chat-main {

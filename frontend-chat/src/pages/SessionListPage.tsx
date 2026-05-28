@@ -1,4 +1,13 @@
-import { DeleteOutlined, EditOutlined, LogoutOutlined, MessageOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import {
+  DeleteOutlined,
+  EditOutlined,
+  LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
+  MessageOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons';
 import { Button, Empty, Input, Modal, Space, Typography, message } from 'antd';
 import type { MouseEvent } from 'react';
 import { useEffect, useState } from 'react';
@@ -12,6 +21,9 @@ export default function SessionListPage() {
   const [renameTitle, setRenameTitle] = useState('');
   const navigate = useNavigate();
   const [auth] = useState(() => getAuthSession());
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => (
+    window.localStorage.getItem('skill_agent_sidebar_collapsed') === 'true'
+  ));
   const tenantId = auth?.user.tenant_id || 'tenant_demo';
 
   const load = () =>
@@ -34,6 +46,14 @@ export default function SessionListPage() {
   async function createSession() {
     const session = await api.post<ChatSession>('/api/chat/sessions', { tenant_id: tenantId });
     navigate(`/chat/${session.id}`);
+  }
+
+  function toggleSidebar() {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      window.localStorage.setItem('skill_agent_sidebar_collapsed', String(next));
+      return next;
+    });
   }
 
   function openRename(event: MouseEvent<HTMLElement>, session: ChatSession) {
@@ -76,9 +96,15 @@ export default function SessionListPage() {
   }
 
   return (
-    <div className="chat-layout">
+    <div className={`chat-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <aside className="session-pane">
         <div className="sidebar-head">
+          <Button
+            className="icon-button"
+            icon={sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
+            onClick={toggleSidebar}
+          />
           <div className="brand-block">
             <span className="brand-mark">SA</span>
             <div>

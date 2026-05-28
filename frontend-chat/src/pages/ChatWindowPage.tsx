@@ -6,6 +6,8 @@ import {
   DownOutlined,
   EditOutlined,
   LogoutOutlined,
+  MenuFoldOutlined,
+  MenuUnfoldOutlined,
   MessageOutlined,
   PlusOutlined,
   RightOutlined,
@@ -292,6 +294,9 @@ export default function ChatWindowPage() {
   const [traceTick, setTraceTick] = useState(0);
   const [expandedTraceIds, setExpandedTraceIds] = useState<string[]>([]);
   const [isComposing, setIsComposing] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => (
+    window.localStorage.getItem('skill_agent_sidebar_collapsed') === 'true'
+  ));
   const [uiConfig, setUiConfig] = useState<UIConfigRead>({
     tenant_id: tenantId,
     show_thinking_trace: true,
@@ -316,6 +321,14 @@ export default function ChatWindowPage() {
       window.requestAnimationFrame(() => {
         element.scrollTop = element.scrollHeight;
       });
+    });
+  }, []);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      window.localStorage.setItem('skill_agent_sidebar_collapsed', String(next));
+      return next;
     });
   }, []);
   const toggleTrace = useCallback((turnId: string) => {
@@ -789,10 +802,15 @@ export default function ChatWindowPage() {
   }
 
   return (
-    <div className="chat-layout">
+    <div className={`chat-layout ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <aside className="session-pane">
         <div className="sidebar-head">
-          <Button className="icon-button" icon={<ArrowLeftOutlined />} onClick={() => navigate('/chat')} />
+          <Button
+            className="icon-button"
+            icon={sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+            aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
+            onClick={toggleSidebar}
+          />
           <div className="brand-block">
             <span className="brand-mark">SA</span>
             <div>
@@ -801,6 +819,7 @@ export default function ChatWindowPage() {
             </div>
           </div>
           <div className="sidebar-actions">
+            <Button className="icon-button" icon={<ArrowLeftOutlined />} aria-label="返回会话列表" onClick={() => navigate('/chat')} />
             <Button className="icon-button primary" icon={<PlusOutlined />} onClick={createSession} />
             <Button
               className="icon-button"
