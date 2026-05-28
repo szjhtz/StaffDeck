@@ -21,6 +21,10 @@ ADAPTIVE_FLOW_RESPONSE_RULE = (
     "步骤是可自适应推进的目标，不是固定问答脚本；已由当前用户消息、历史信息或路由意图满足的内容"
     "不得重复追问，应直接推进到下一缺失信息、工具调用或最终回复。"
 )
+CONFIRMATION_FLOW_RESPONSE_RULE = (
+    "涉及购买、下单、创建订单、退款、退货、取消订单或提交申请等动作时，"
+    "调用工具或执行处理前必须先让用户确认关键对象和操作内容。"
+)
 TOOL_PROCESS_KEYWORDS = (
     "查询",
     "核实",
@@ -31,6 +35,17 @@ TOOL_PROCESS_KEYWORDS = (
     "提交",
     "办理",
     "处理",
+)
+CONFIRMATION_PROCESS_KEYWORDS = (
+    "购买",
+    "下单",
+    "创建订单",
+    "退款",
+    "退货",
+    "取消订单",
+    "提交申请",
+    "提交",
+    "办理",
 )
 TOOL_STEP_INSTRUCTION_SUFFIX = (
     "工具参数满足时直接调用工具；工具成功后必须基于工具结果进入最终回复，"
@@ -99,6 +114,8 @@ class SkillDistiller:
             response_rules.append(CLOSED_LOOP_RESPONSE_RULE)
         if ADAPTIVE_FLOW_RESPONSE_RULE not in response_rules:
             response_rules.append(ADAPTIVE_FLOW_RESPONSE_RULE)
+        if _needs_confirmation(_request_text(request)) and CONFIRMATION_FLOW_RESPONSE_RULE not in response_rules:
+            response_rules.append(CONFIRMATION_FLOW_RESPONSE_RULE)
         normalized = {
             "skill_id": _string(draft.get("skill_id"), fallback.skill_id),
             "name": _string(draft.get("name"), fallback.name),
@@ -152,6 +169,11 @@ class SkillDistiller:
                 },
             )
             warnings.append("原始改写未包含工具步骤，已按可用工具补充闭环执行步骤。")
+
+        if tool_actions and _needs_confirmation(_request_text(request)):
+            inserted = _ensure_confirmation_before_tool(normalized_steps)
+            if inserted:
+                warnings.append("原始改写缺少执行前确认步骤，已补充确认步骤。")
 
         for step in normalized_steps:
             _ensure_adaptive_step_instruction(step)
@@ -223,6 +245,7 @@ class SkillDistiller:
         required_info = [field for field, _label in inferred_fields]
         required_labels = [label for _field, label in inferred_fields]
         tool_actions = _tool_actions(request.available_tools)
+        needs_confirmation = bool(tool_actions and _needs_confirmation(_request_text(request)))
         steps: list[SkillStep] = []
         if required_info:
             labels = "、".join(required_labels)
@@ -238,6 +261,19 @@ class SkillDistiller:
                         f"{ADAPTIVE_STEP_INSTRUCTION_SUFFIX}"
                     ),
                     expected_user_info=required_info,
+                    allowed_actions=["ask_user", "continue_flow"],
+                )
+            )
+        if needs_confirmation:
+            steps.append(
+                SkillStep(
+                    step_id="confirm_operation",
+                    name="确认操作信息",
+                    instruction=(
+                        "调用工具或执行处理前，向用户确认关键对象、数量、订单号、诉求类型等信息；"
+                        "只有用户明确确认后，才能写入 operation_confirmed=true 并继续。"
+                    ),
+                    expected_user_info=["operation_confirmed"],
                     allowed_actions=["ask_user", "continue_flow"],
                 )
             )
@@ -277,7 +313,9 @@ class SkillDistiller:
             user_utterance_examples=[title],
             goal=_infer_goals(raw),
             required_info=required_info,
-            slot_filling_policy=_default_slot_filling_policy(required_info),
+            slot_filling_policy=_default_slot_filling_policy(
+                [*required_info, *(["operation_confirmed"] if needs_confirmation else [])]
+            ),
             steps=steps,
             interruption_policy={
                 "related_question": "回答相关问题后回到当前流程。",
@@ -285,7 +323,11 @@ class SkillDistiller:
                 "chitchat": "简短回应后引导用户继续当前流程。",
                 "user_wants_human": "直接转人工。",
             },
-            response_rules=["信息不足时先追问，不要编造事实。", ADAPTIVE_FLOW_RESPONSE_RULE],
+            response_rules=[
+                "信息不足时先追问，不要编造事实。",
+                ADAPTIVE_FLOW_RESPONSE_RULE,
+                *([CONFIRMATION_FLOW_RESPONSE_RULE] if needs_confirmation else []),
+            ],
         )
 
 
@@ -304,6 +346,61 @@ def _ensure_adaptive_step_instruction(step: dict[str, Any]) -> None:
     step["instruction"] = f"{instruction}{ADAPTIVE_STEP_INSTRUCTION_SUFFIX}"
 
 
+def _ensure_confirmation_before_tool(steps: list[dict[str, Any]]) -> bool:
+    tool_index = next(
+        (
+            index
+            for index, step in enumerate(steps)
+            if any(str(action).startswith("call_tool:") for action in step.get("allowed_actions", []))
+        ),
+        -1,
+    )
+    if tool_index < 0:
+        return False
+
+    prior_confirmation_fields = _confirmation_fields(steps[:tool_index])
+    if prior_confirmation_fields:
+        _append_tool_confirmation_instruction(steps[tool_index], prior_confirmation_fields)
+        return False
+
+    confirmation_field = "operation_confirmed"
+    steps.insert(
+        tool_index,
+        {
+            "step_id": _unique_step_id(steps, "confirm_operation"),
+            "name": "确认操作信息",
+            "instruction": (
+                "调用工具或执行处理前，向用户确认关键对象、数量、订单号、诉求类型等信息；"
+                f"只有用户明确确认后，才能写入 {confirmation_field}=true 并继续。"
+            ),
+            "expected_user_info": [confirmation_field],
+            "allowed_actions": ["ask_user", "continue_flow"],
+        },
+    )
+    _append_tool_confirmation_instruction(steps[tool_index + 1], [confirmation_field])
+    return True
+
+
+def _confirmation_fields(steps: list[dict[str, Any]]) -> list[str]:
+    fields: list[str] = []
+    for step in steps:
+        expected = [str(field) for field in step.get("expected_user_info", [])]
+        for field in expected:
+            if field.endswith("_confirmed") and field not in fields:
+                fields.append(field)
+    return fields
+
+
+def _append_tool_confirmation_instruction(step: dict[str, Any], confirmation_fields: list[str]) -> None:
+    if not confirmation_fields:
+        return
+    instruction = str(step.get("instruction") or "")
+    if "确认字段" in instruction or "confirmed=true" in instruction:
+        return
+    field_text = "、".join(f"{field}=true" for field in confirmation_fields)
+    step["instruction"] = f"{instruction}调用工具前必须确认字段已满足：{field_text}。"
+
+
 def _last_step_allows_answer(steps: list[dict[str, Any]]) -> bool:
     if not steps:
         return False
@@ -319,6 +416,16 @@ def _unique_step_id(steps: list[dict[str, Any]], base: str) -> str:
     while f"{base}_{index}" in existing:
         index += 1
     return f"{base}_{index}"
+
+
+def _needs_confirmation(raw: str) -> bool:
+    return any(keyword in raw for keyword in CONFIRMATION_PROCESS_KEYWORDS) or (
+        "订单" in raw and any(keyword in raw for keyword in ("生成", "新增", "添加"))
+    )
+
+
+def _request_text(request: SkillDistillRequest) -> str:
+    return f"{request.title}\n{request.raw_content}"
 
 
 def _extract_json(text: str) -> str:

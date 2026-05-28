@@ -22,15 +22,15 @@ REFUND_SKILL = {
     "description": "处理用户退款、退货、取消订单等诉求。",
     "trigger_intents": ["退款", "退货", "取消订单", "不想要了"],
     "user_utterance_examples": ["我想退货", "这个不要了", "买错了能退吗", "给我退钱"],
-    "goal": ["确认用户退款诉求", "收集订单号", "查询订单状态", "说明退款政策", "引导用户继续处理或转人工"],
+    "goal": ["确认用户退款诉求", "收集订单号", "确认处理对象", "查询订单状态", "说明退款政策", "引导用户继续处理或转人工"],
     "required_info": ["order_id", "refund_reason"],
     "slot_filling_policy": {
         "enabled": True,
         "multi_slot_per_turn": True,
         "extract_scope": "all_skill_expected_user_info",
         "skip_satisfied_steps": True,
-        "description": "每轮同时抽取用户已表达的退款类型、订单号、退款原因等信息，已满足的信息不再追问。",
-        "target_info": ["refund_type", "order_id", "refund_reason"],
+        "description": "每轮同时抽取用户已表达的退款类型、订单号、退款原因和确认意愿等信息，已满足的信息不再追问。",
+        "target_info": ["refund_type", "order_id", "order_confirmed", "refund_reason"],
     },
     "steps": [
         {
@@ -43,16 +43,23 @@ REFUND_SKILL = {
         {
             "step_id": "collect_order_info",
             "name": "收集订单信息",
-            "instruction": "将本步骤作为目标而不是固定话术；如果用户未提供订单号，直接询问订单号；如果已提供订单号，写入 order_id 并调用 order.query。不要再询问用户是退货还是退款。",
+            "instruction": "将本步骤作为目标而不是固定话术；如果用户未提供订单号，直接询问订单号；如果用户明确提供订单号，写入 order_id 并进入确认步骤；如果 order_id 是根据 recent_messages、上一笔订单或上下文推断出来的，必须进入确认步骤，不得直接调用工具。不要再询问用户是退货还是退款。",
             "expected_user_info": ["order_id"],
-            "allowed_actions": ["ask_user", "call_tool:order.query"],
+            "allowed_actions": ["ask_user", "continue_flow"],
+        },
+        {
+            "step_id": "confirm_refund_order",
+            "name": "确认售后订单",
+            "instruction": "在查询或处理退款/退货/取消订单前，必须向用户确认本次要处理的订单号和诉求类型。只有用户明确确认后，才能写入 order_confirmed=true 并继续；如果用户说不是、另一个、换一个，应清空或更新 order_id 并回到订单信息收集。",
+            "expected_user_info": ["order_confirmed"],
+            "allowed_actions": ["ask_user", "continue_flow"],
         },
         {
             "step_id": "check_refund_eligibility",
             "name": "查询退款资格",
-            "instruction": "将本步骤作为目标而不是固定话术；根据订单查询结果说明是否可能支持退款，不要承诺一定退款；如还缺退款原因则继续收集，已满足时给出明确下一步。",
+            "instruction": "将本步骤作为目标而不是固定话术；仅当 order_id 已存在且 order_confirmed=true 时调用 order.query；根据订单查询结果说明是否可能支持退款/退货，不要承诺一定成功；如还缺原因则继续收集，已满足时给出明确下一步。",
             "expected_user_info": [],
-            "allowed_actions": ["answer_user", "handoff_human"],
+            "allowed_actions": ["continue_flow", "call_tool:order.query", "handoff_human"],
         },
         {
             "step_id": "collect_refund_reason",
@@ -68,7 +75,13 @@ REFUND_SKILL = {
         "chitchat": "简短回应后，引导用户继续退款流程。",
         "user_wants_human": "直接转人工。",
     },
-    "response_rules": ["不要承诺一定能退款。", "未查询订单前，不要判断是否符合退款条件。", "如果用户要求人工，应转人工。", ADAPTIVE_FLOW_RULE],
+    "response_rules": [
+        "不要承诺一定能退款。",
+        "未查询订单前，不要判断是否符合退款条件。",
+        "退款、退货或取消订单前必须先向用户确认订单号和诉求类型。",
+        "如果用户要求人工，应转人工。",
+        ADAPTIVE_FLOW_RULE,
+    ],
 }
 
 EXCHANGE_SKILL = {
@@ -122,15 +135,15 @@ PURCHASE_SKILL = {
     "description": "引导用户完成商品购买流程，包括收集用户信息、确认商品、生成订单并反馈结果。",
     "trigger_intents": ["购买商品", "下单", "买东西", "购买", "place_order"],
     "user_utterance_examples": ["我想买这个商品", "帮我下单", "我要购买 A1", "我要买一个a1"],
-    "goal": ["获取用户身份信息", "确认购买的商品及数量", "生成有效订单", "向用户反馈订单号及状态"],
+    "goal": ["获取用户身份信息", "确认购买的商品及数量", "确认下单意愿", "生成有效订单", "向用户反馈订单号及状态"],
     "required_info": ["user_name", "product_id", "quantity"],
     "slot_filling_policy": {
         "enabled": True,
         "multi_slot_per_turn": True,
         "extract_scope": "all_skill_expected_user_info",
         "skip_satisfied_steps": True,
-        "description": "每轮同时抽取用户已表达的姓名、商品 ID、购买数量等信息；数量需理解口语数字和量词表达，已满足的信息不再追问。",
-        "target_info": ["user_name", "product_id", "quantity"],
+        "description": "每轮同时抽取用户已表达的姓名、商品 ID、购买数量和下单确认等信息；数量需理解口语数字和量词表达，已满足的信息不再追问。",
+        "target_info": ["user_name", "product_id", "quantity", "purchase_confirmed"],
     },
     "steps": [
         {
@@ -140,20 +153,27 @@ PURCHASE_SKILL = {
                 "将本步骤作为目标而不是固定话术；同时收集用户姓名、商品 ID 和数量。"
                 "用户一句话提供多个信息时必须一次性写入 slot_updates；"
                 "数值字段需要理解口语数字和量词表达，例如“一个/一件/一台”表示 1，“两个/两件”表示 2，“三份/3个”表示 3。"
-                "已提供的信息不再追问，只追问真正缺失的信息；全部满足后直接进入订单创建。"
+                "已提供的信息不再追问，只追问真正缺失的信息；全部满足后进入下单确认，不要直接创建订单。"
             ),
             "expected_user_info": ["user_name", "product_id", "quantity"],
+            "allowed_actions": ["ask_user", "continue_flow"],
+        },
+        {
+            "step_id": "confirm_purchase",
+            "name": "确认下单信息",
+            "instruction": "创建订单前必须向用户确认姓名、商品 ID 和数量。只有用户明确确认后，才能写入 purchase_confirmed=true 并继续；如果用户修改商品、数量或姓名，应更新对应 slot 并重新确认。",
+            "expected_user_info": ["purchase_confirmed"],
             "allowed_actions": ["ask_user", "continue_flow"],
         },
         {
             "step_id": "confirm_product",
             "name": "执行购买/创建订单",
             "instruction": (
-                "将本步骤作为目标而不是固定话术；当 user_name、product_id、quantity 已满足时，"
+                "将本步骤作为目标而不是固定话术；仅当 user_name、product_id、quantity 已满足且 purchase_confirmed=true 时，"
                 "直接调用 product.purchase 或 order.add 创建订单，不要重复确认商品或数量。"
                 "如果工具需要 user_id 且只有 user_name，可将 user_name 作为 user_id。"
             ),
-            "expected_user_info": ["product_id", "quantity"],
+            "expected_user_info": ["product_id", "quantity", "purchase_confirmed"],
             "allowed_actions": ["continue_flow", "call_tool:product.purchase", "call_tool:order.add"],
         },
         {
@@ -173,6 +193,7 @@ PURCHASE_SKILL = {
     "response_rules": [
         "保持语气友好、专业。",
         "明确告知用户订单号。",
+        "创建订单前必须先向用户确认姓名、商品 ID 和数量。",
         "若商品不存在或库存不足，需明确告知用户并建议其他操作。",
         ADAPTIVE_FLOW_RULE,
     ],
@@ -397,11 +418,16 @@ def _sync_demo_skill_if_stale(existing: Skill, desired: dict) -> None:
     current_steps = [step for step in content.get("steps", []) if isinstance(step, dict)]
     desired_steps = [step for step in desired.get("steps", []) if isinstance(step, dict)]
     current_steps_by_id = {str(step.get("step_id") or ""): step for step in current_steps}
+    merged_steps: list[dict] = []
+    used_step_ids: set[str] = set()
 
     for desired_step in desired_steps:
         step_id = str(desired_step.get("step_id") or "")
         current_step = current_steps_by_id.get(step_id)
         if not current_step:
+            merged_steps.append(dict(desired_step))
+            used_step_ids.add(step_id)
+            changed = True
             continue
         desired_instruction = str(desired_step.get("instruction") or "")
         current_instruction = str(current_step.get("instruction") or "")
@@ -412,6 +438,18 @@ def _sync_demo_skill_if_stale(existing: Skill, desired: dict) -> None:
             if key in desired_step and current_step.get(key) != desired_step.get(key):
                 current_step[key] = desired_step[key]
                 changed = True
+        merged_steps.append(current_step)
+        used_step_ids.add(step_id)
+
+    for current_step in current_steps:
+        step_id = str(current_step.get("step_id") or "")
+        if step_id and step_id not in used_step_ids:
+            merged_steps.append(current_step)
+            used_step_ids.add(step_id)
+
+    if desired_steps and content.get("steps") != merged_steps:
+        content["steps"] = merged_steps
+        changed = True
 
     if desired.get("required_info") and content.get("required_info") != desired.get("required_info"):
         content["required_info"] = desired["required_info"]
@@ -452,6 +490,12 @@ def _demo_instruction_is_stale(current: str, desired: str) -> bool:
     if "直接询问订单号" in desired and "直接询问订单号" not in current:
         return True
     if "目标而不是固定话术" in desired and "目标而不是固定话术" not in current:
+        return True
+    if "进入确认步骤" in desired and "进入确认步骤" not in current:
+        return True
+    if "order_confirmed" in desired and "order_confirmed" not in current:
+        return True
+    if "purchase_confirmed" in desired and "purchase_confirmed" not in current:
         return True
     return False
 

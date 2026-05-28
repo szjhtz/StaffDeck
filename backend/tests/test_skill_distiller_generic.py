@@ -17,6 +17,7 @@ def test_fallback_card_is_not_domain_hardcoded_for_commerce_text() -> None:
 
     assert card.skill_id != "purchase_product"
     assert card.required_info == ["user_name"]
+    assert any("operation_confirmed" in step.expected_user_info for step in card.steps)
     assert any("call_tool:product.purchase" in step.allowed_actions for step in card.steps)
     assert any("call_tool:order.add" in step.allowed_actions for step in card.steps)
 
@@ -83,9 +84,19 @@ def test_normalize_response_adds_closed_loop_tool_and_final_reply_steps() -> Non
     steps = response.draft_skill.steps
 
     assert any("call_tool:order.query" in step.allowed_actions for step in steps)
+    confirm_index = next(
+        index for index, step in enumerate(steps) if "operation_confirmed" in step.expected_user_info
+    )
+    tool_index = next(
+        index
+        for index, step in enumerate(steps)
+        if any(action.startswith("call_tool:") for action in step.allowed_actions)
+    )
+    assert confirm_index < tool_index
     assert "answer_user" in steps[-1].allowed_actions
     assert any("不得把" in rule and "请稍候" in rule for rule in response.draft_skill.response_rules)
     assert any("自适应推进" in rule for rule in response.draft_skill.response_rules)
+    assert any("确认关键对象" in rule for rule in response.draft_skill.response_rules)
     assert all("目标而不是固定话术" in step.instruction for step in steps)
 
 
