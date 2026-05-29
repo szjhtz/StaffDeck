@@ -51,6 +51,11 @@ class SkillRead(BaseModel):
     description: Optional[str]
     content: SkillCard
     status: str
+    call_count: int = 0
+    positive_feedback_count: int = 0
+    negative_feedback_count: int = 0
+    positive_rate: float = 0.0
+    negative_rate: float = 0.0
     created_at: str
     updated_at: str
 
@@ -67,4 +72,20 @@ class SkillDistillRequest(BaseModel):
 
 class SkillDistillResponse(BaseModel):
     draft_skill: SkillCard
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SkillRewriteRequest(BaseModel):
+    tenant_id: str
+    current_skill: SkillCard
+    instruction: str
+    target_path: str = "all"
+    target_label: Optional[str] = None
+    conversation: list[dict[str, str]] = Field(default_factory=list)
+
+
+class SkillRewriteResponse(BaseModel):
+    draft_skill: SkillCard
+    assistant_message: str
+    changed_paths: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)

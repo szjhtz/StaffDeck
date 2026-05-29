@@ -9,7 +9,17 @@ from sqlmodel import Session, select
 
 from app.core import AgentLoop
 from app.db import engine, get_session
-from app.db.models import AgentEvent, ChatSession, Message, MessageFeedback, Skill, User, new_id, utc_now
+from app.db.models import (
+    AgentEvent,
+    ChatSession,
+    Message,
+    MessageFeedback,
+    Skill,
+    SkillFeedback,
+    User,
+    new_id,
+    utc_now,
+)
 from app.security.auth import get_current_user
 from app.security.tenant import ensure_tenant
 from app.session.session_schema import (
@@ -169,11 +179,16 @@ def delete_chat_session(
     feedback_rows = db.exec(
         select(MessageFeedback).where(MessageFeedback.tenant_id == tenant_id, MessageFeedback.session_id == session_id)
     ).all()
+    skill_feedback_rows = db.exec(
+        select(SkillFeedback).where(SkillFeedback.tenant_id == tenant_id, SkillFeedback.session_id == session_id)
+    ).all()
     for message in messages:
         db.delete(message)
     for event in events:
         db.delete(event)
     for feedback in feedback_rows:
+        db.delete(feedback)
+    for feedback in skill_feedback_rows:
         db.delete(feedback)
     db.delete(row)
     db.commit()
@@ -233,6 +248,7 @@ def upsert_message_feedback(
             updated_at=now,
         )
     db.add(row)
+    _upsert_skill_feedback_for_message(db, request.tenant_id, current_user.id, message_row, request.rating, now)
     db.add(
         AgentEvent(
             tenant_id=request.tenant_id,
@@ -271,6 +287,7 @@ def delete_message_feedback(
     ).first()
     if existing:
         db.delete(existing)
+        _delete_skill_feedback_for_message(db, tenant_id, current_user.id, message_row)
         db.add(
             AgentEvent(
                 tenant_id=tenant_id,
@@ -349,6 +366,111 @@ def _feedback_by_message(
         )
     ).all()
     return {row.message_id: row.rating for row in rows}
+
+
+def _upsert_skill_feedback_for_message(
+    db: Session,
+    tenant_id: str,
+    user_id: str,
+    message_row: Message,
+    rating: str,
+    now,
+) -> None:
+    skill_id = _active_skill_for_assistant_message(db, tenant_id, message_row)
+    if not skill_id:
+        return
+    existing = db.exec(
+        select(SkillFeedback).where(
+            SkillFeedback.tenant_id == tenant_id,
+            SkillFeedback.message_id == message_row.id,
+            SkillFeedback.user_id == user_id,
+        )
+    ).first()
+    if existing:
+        existing.skill_id = skill_id
+        existing.rating = rating
+        existing.updated_at = now
+        db.add(existing)
+        return
+    db.add(
+        SkillFeedback(
+            tenant_id=tenant_id,
+            skill_id=skill_id,
+            session_id=message_row.session_id,
+            message_id=message_row.id,
+            user_id=user_id,
+            rating=rating,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+
+def _delete_skill_feedback_for_message(
+    db: Session,
+    tenant_id: str,
+    user_id: str,
+    message_row: Message,
+) -> None:
+    existing = db.exec(
+        select(SkillFeedback).where(
+            SkillFeedback.tenant_id == tenant_id,
+            SkillFeedback.message_id == message_row.id,
+            SkillFeedback.user_id == user_id,
+        )
+    ).first()
+    if existing:
+        db.delete(existing)
+
+
+def _active_skill_for_assistant_message(db: Session, tenant_id: str, message_row: Message) -> str | None:
+    messages = db.exec(
+        select(Message)
+        .where(Message.tenant_id == tenant_id, Message.session_id == message_row.session_id)
+        .order_by(Message.created_at)
+    ).all()
+    target_index = next((index for index, item in enumerate(messages) if item.id == message_row.id), -1)
+    if target_index < 0:
+        return None
+    user_message = next(
+        (item for item in reversed(messages[:target_index]) if item.role == "user"),
+        None,
+    )
+    if not user_message:
+        return None
+
+    events = db.exec(
+        select(AgentEvent)
+        .where(AgentEvent.tenant_id == tenant_id, AgentEvent.session_id == message_row.session_id)
+        .order_by(AgentEvent.created_at)
+    ).all()
+    collecting = False
+    last_skill_id: str | None = None
+    for event in events:
+        payload = event.payload_json or {}
+        if event.event_type == "user_message_received":
+            collecting = str(payload.get("message") or "") == user_message.content
+            last_skill_id = None if collecting else last_skill_id
+            continue
+        if not collecting:
+            continue
+        event_skill_id = _skill_id_from_event(event)
+        if event_skill_id:
+            last_skill_id = event_skill_id
+        if event.event_type == "assistant_message_created" and str(payload.get("reply") or "") == message_row.content:
+            return last_skill_id
+    return last_skill_id
+
+
+def _skill_id_from_event(event: AgentEvent) -> str | None:
+    payload = event.payload_json or {}
+    if event.event_type in {"skill_started", "skill_suspended", "skill_resumed", "skill_step_changed"}:
+        return str(payload.get("to_skill_id") or payload.get("from_skill_id") or "") or None
+    if event.event_type == "skill_completed":
+        return str(payload.get("skill_id") or "") or None
+    if event.event_type == "reflection_decision_created":
+        return str(payload.get("target_skill_id") or "") or None
+    return None
 
 
 def _ensure_request_tenant(tenant_id: str, current_user: User) -> None:

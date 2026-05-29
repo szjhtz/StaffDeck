@@ -8,23 +8,26 @@ from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 
 from app.db import get_session
-from app.db.models import ModelConfig, Skill, Tool, utc_now
+from app.db.models import AgentEvent, ModelConfig, Skill, SkillFeedback, Tool, utc_now
 from app.llm import LLMError
 from app.security.tenant import ensure_tenant
-from app.skills import SkillDistiller
+from app.skills import SkillDistiller, SkillEditor
 from app.skills.skill_schema import (
     SkillCard,
     SkillCreateRequest,
     SkillDistillRequest,
     SkillDistillResponse,
     SkillRead,
+    SkillRewriteRequest,
+    SkillRewriteResponse,
     SkillUpdateRequest,
 )
 
 router = APIRouter(prefix="/api/enterprise/skills", tags=["enterprise:skills"])
 
 
-def skill_read(row: Skill) -> SkillRead:
+def skill_read(row: Skill, stats: dict[str, dict[str, float | int]] | None = None) -> SkillRead:
+    skill_stats = (stats or {}).get(row.skill_id, {})
     return SkillRead(
         id=row.id,
         tenant_id=row.tenant_id,
@@ -35,6 +38,11 @@ def skill_read(row: Skill) -> SkillRead:
         description=row.description,
         content=SkillCard.model_validate(row.content_json),
         status=row.status,
+        call_count=int(skill_stats.get("call_count", 0)),
+        positive_feedback_count=int(skill_stats.get("positive_feedback_count", 0)),
+        negative_feedback_count=int(skill_stats.get("negative_feedback_count", 0)),
+        positive_rate=float(skill_stats.get("positive_rate", 0.0)),
+        negative_rate=float(skill_stats.get("negative_rate", 0.0)),
         created_at=row.created_at.isoformat(),
         updated_at=row.updated_at.isoformat(),
     )
@@ -44,7 +52,8 @@ def skill_read(row: Skill) -> SkillRead:
 def list_skills(tenant_id: str = Query(...), db: Session = Depends(get_session)) -> list[SkillRead]:
     ensure_tenant(db, tenant_id)
     rows = db.exec(select(Skill).where(Skill.tenant_id == tenant_id)).all()
-    return [skill_read(row) for row in rows]
+    stats = _skill_stats(db, tenant_id)
+    return [skill_read(row, stats) for row in rows]
 
 
 @router.post("", response_model=SkillRead)
@@ -71,13 +80,13 @@ def create_skill(request: SkillCreateRequest, db: Session = Depends(get_session)
     db.add(row)
     db.commit()
     db.refresh(row)
-    return skill_read(row)
+    return skill_read(row, _skill_stats(db, request.tenant_id))
 
 
 @router.get("/{skill_id}", response_model=SkillRead)
 def get_skill(skill_id: str, tenant_id: str = Query(...), db: Session = Depends(get_session)) -> SkillRead:
     row = _get_skill(db, tenant_id, skill_id)
-    return skill_read(row)
+    return skill_read(row, _skill_stats(db, tenant_id))
 
 
 @router.put("/{skill_id}", response_model=SkillRead)
@@ -96,7 +105,7 @@ def update_skill(skill_id: str, request: SkillUpdateRequest, db: Session = Depen
     db.add(row)
     db.commit()
     db.refresh(row)
-    return skill_read(row)
+    return skill_read(row, _skill_stats(db, request.tenant_id))
 
 
 @router.post("/{skill_id}/publish", response_model=SkillRead)
@@ -107,7 +116,7 @@ def publish_skill(skill_id: str, tenant_id: str = Query(...), db: Session = Depe
     db.add(row)
     db.commit()
     db.refresh(row)
-    return skill_read(row)
+    return skill_read(row, _skill_stats(db, tenant_id))
 
 
 @router.post("/{skill_id}/archive", response_model=SkillRead)
@@ -118,7 +127,27 @@ def archive_skill(skill_id: str, tenant_id: str = Query(...), db: Session = Depe
     db.add(row)
     db.commit()
     db.refresh(row)
-    return skill_read(row)
+    return skill_read(row, _skill_stats(db, tenant_id))
+
+
+@router.delete("/{skill_id}")
+def delete_skill(
+    skill_id: str,
+    tenant_id: str = Query(...),
+    db: Session = Depends(get_session),
+) -> dict[str, str]:
+    row = _get_skill(db, tenant_id, skill_id)
+    feedback_rows = db.exec(
+        select(SkillFeedback).where(
+            SkillFeedback.tenant_id == tenant_id,
+            SkillFeedback.skill_id == skill_id,
+        )
+    ).all()
+    for feedback in feedback_rows:
+        db.delete(feedback)
+    db.delete(row)
+    db.commit()
+    return {"status": "deleted"}
 
 
 @router.post("/distill", response_model=SkillDistillResponse)
@@ -144,6 +173,38 @@ def distill_skill_stream(request: SkillDistillRequest) -> StreamingResponse:
                 yield _sse(item["event"], item["data"])
 
     return StreamingResponse(stream_events(), media_type="text/event-stream")
+
+
+@router.post("/{skill_id}/rewrite/stream")
+def rewrite_skill_stream(skill_id: str, request: SkillRewriteRequest) -> StreamingResponse:
+    if request.current_skill.skill_id != skill_id:
+        raise HTTPException(status_code=400, detail="Path skill_id must match current_skill.skill_id")
+
+    def stream_events() -> Iterator[str]:
+        with Session(get_session_engine()) as db:
+            ensure_tenant(db, request.tenant_id)
+            model_config = _get_default_model(db, request.tenant_id)
+            yield _sse("status", {"text": "正在改写选中部分"})
+            for item in SkillEditor().stream_text(request, model_config):
+                yield _sse(item["event"], item["data"])
+
+    return StreamingResponse(stream_events(), media_type="text/event-stream")
+
+
+@router.post("/{skill_id}/rewrite", response_model=SkillRewriteResponse)
+def rewrite_skill(
+    skill_id: str,
+    request: SkillRewriteRequest,
+    db: Session = Depends(get_session),
+) -> SkillRewriteResponse:
+    if request.current_skill.skill_id != skill_id:
+        raise HTTPException(status_code=400, detail="Path skill_id must match current_skill.skill_id")
+    ensure_tenant(db, request.tenant_id)
+    model_config = _get_default_model(db, request.tenant_id)
+    try:
+        return SkillEditor().rewrite(request, model_config)
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 def get_session_engine():
@@ -182,6 +243,51 @@ def _with_available_tools(db: Session, request: SkillDistillRequest) -> SkillDis
 def _sse(event: object, data: object) -> str:
     payload = json.dumps(data, ensure_ascii=False)
     return f"event: {event}\ndata: {payload}\n\n"
+
+
+def _skill_stats(db: Session, tenant_id: str) -> dict[str, dict[str, float | int]]:
+    stats: dict[str, dict[str, float | int]] = {}
+    events = db.exec(
+        select(AgentEvent).where(
+            AgentEvent.tenant_id == tenant_id,
+            AgentEvent.event_type.in_(["skill_started", "skill_suspended", "skill_resumed"]),  # type: ignore[attr-defined]
+        )
+    ).all()
+    for event in events:
+        payload = event.payload_json or {}
+        skill_id = str(payload.get("to_skill_id") or "")
+        if not skill_id:
+            continue
+        entry = stats.setdefault(skill_id, _empty_stats())
+        entry["call_count"] = int(entry["call_count"]) + 1
+
+    feedback_rows = db.exec(
+        select(SkillFeedback).where(SkillFeedback.tenant_id == tenant_id)
+    ).all()
+    for feedback in feedback_rows:
+        entry = stats.setdefault(feedback.skill_id, _empty_stats())
+        if feedback.rating == "up":
+            entry["positive_feedback_count"] = int(entry["positive_feedback_count"]) + 1
+        elif feedback.rating == "down":
+            entry["negative_feedback_count"] = int(entry["negative_feedback_count"]) + 1
+
+    for entry in stats.values():
+        positive = int(entry["positive_feedback_count"])
+        negative = int(entry["negative_feedback_count"])
+        total = positive + negative
+        entry["positive_rate"] = round(positive / total, 4) if total else 0.0
+        entry["negative_rate"] = round(negative / total, 4) if total else 0.0
+    return stats
+
+
+def _empty_stats() -> dict[str, float | int]:
+    return {
+        "call_count": 0,
+        "positive_feedback_count": 0,
+        "negative_feedback_count": 0,
+        "positive_rate": 0.0,
+        "negative_rate": 0.0,
+    }
 
 
 def _get_skill(db: Session, tenant_id: str, skill_id: str) -> Skill:

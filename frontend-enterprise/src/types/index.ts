@@ -23,6 +23,11 @@ export type SkillRead = {
   description?: string;
   content: SkillCard;
   status: 'draft' | 'published' | 'archived';
+  call_count: number;
+  positive_feedback_count: number;
+  negative_feedback_count: number;
+  positive_rate: number;
+  negative_rate: number;
   updated_at: string;
 };
 
