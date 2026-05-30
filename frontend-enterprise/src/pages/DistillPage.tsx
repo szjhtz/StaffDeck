@@ -142,7 +142,7 @@ export default function DistillPage() {
     if (!saveReviewDraft) return [];
     const baseDraft = lastSavedDraft || blankSkillForAnimation(saveReviewDraft);
     const changedPaths = diffTargetPaths(baseDraft, saveReviewDraft, allTargetPaths(saveReviewDraft));
-    return collectTextDiffs(baseDraft, saveReviewDraft, changedPaths);
+    return collectTextDiffs(baseDraft, saveReviewDraft, changedPaths).filter((diff) => diff.field !== 'version');
   }, [lastSavedDraft, saveReviewDraft]);
 
   async function send() {
@@ -1477,7 +1477,7 @@ function bumpSkillVersion(version: string): string {
   const parts = version.split('.').map((item) => Number.parseInt(item, 10));
   const major = Number.isFinite(parts[0]) ? parts[0] : 1;
   const minor = Number.isFinite(parts[1]) ? parts[1] : 0;
-  return `${major}.${minor + 5}.0`;
+  return `${major}.${minor + 1}.0`;
 }
 
 function fieldLabel(field: string): string {
