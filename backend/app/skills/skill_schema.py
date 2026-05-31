@@ -56,6 +56,17 @@ class SkillRead(BaseModel):
     negative_feedback_count: int = 0
     positive_rate: float = 0.0
     negative_rate: float = 0.0
+    total_call_count: int = 0
+    total_positive_feedback_count: int = 0
+    total_negative_feedback_count: int = 0
+    total_positive_rate: float = 0.0
+    total_negative_rate: float = 0.0
+    recent_versions: list[str] = Field(default_factory=list)
+    recent_call_count: int = 0
+    recent_positive_feedback_count: int = 0
+    recent_negative_feedback_count: int = 0
+    recent_positive_rate: float = 0.0
+    recent_negative_rate: float = 0.0
     created_at: str
     updated_at: str
 

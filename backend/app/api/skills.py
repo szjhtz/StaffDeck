@@ -28,8 +28,15 @@ from app.skills.step_ids import skill_card_with_unique_step_ids
 router = APIRouter(prefix="/api/enterprise/skills", tags=["enterprise:skills"])
 
 
-def skill_read(row: Skill, stats: dict[str, dict[str, float | int]] | None = None) -> SkillRead:
-    skill_stats = _stats_for(stats or {}, row.skill_id, row.version)
+def skill_read(
+    row: Skill,
+    stats: dict[str, dict[str, float | int]] | None = None,
+    recent_stats: dict[str, dict[str, object]] | None = None,
+) -> SkillRead:
+    all_stats = stats or {}
+    skill_stats = _stats_for(all_stats, row.skill_id, row.version)
+    total_stats = all_stats.get(row.skill_id, {})
+    recent_skill_stats = (recent_stats or {}).get(row.skill_id, {})
     content, _warnings = skill_card_with_unique_step_ids(SkillCard.model_validate(row.content_json))
     return SkillRead(
         id=row.id,
@@ -46,6 +53,17 @@ def skill_read(row: Skill, stats: dict[str, dict[str, float | int]] | None = Non
         negative_feedback_count=int(skill_stats.get("negative_feedback_count", 0)),
         positive_rate=float(skill_stats.get("positive_rate", 0.0)),
         negative_rate=float(skill_stats.get("negative_rate", 0.0)),
+        total_call_count=int(total_stats.get("call_count", 0)),
+        total_positive_feedback_count=int(total_stats.get("positive_feedback_count", 0)),
+        total_negative_feedback_count=int(total_stats.get("negative_feedback_count", 0)),
+        total_positive_rate=float(total_stats.get("positive_rate", 0.0)),
+        total_negative_rate=float(total_stats.get("negative_rate", 0.0)),
+        recent_versions=list(recent_skill_stats.get("recent_versions", [])),
+        recent_call_count=int(recent_skill_stats.get("call_count", 0)),
+        recent_positive_feedback_count=int(recent_skill_stats.get("positive_feedback_count", 0)),
+        recent_negative_feedback_count=int(recent_skill_stats.get("negative_feedback_count", 0)),
+        recent_positive_rate=float(recent_skill_stats.get("positive_rate", 0.0)),
+        recent_negative_rate=float(recent_skill_stats.get("negative_rate", 0.0)),
         created_at=row.created_at.isoformat(),
         updated_at=row.updated_at.isoformat(),
     )
@@ -81,7 +99,8 @@ def list_skills(tenant_id: str = Query(...), db: Session = Depends(get_session))
     ensure_tenant(db, tenant_id)
     rows = db.exec(select(Skill).where(Skill.tenant_id == tenant_id)).all()
     stats = _skill_stats(db, tenant_id)
-    return [skill_read(row, stats) for row in rows]
+    recent_stats = _recent_skill_stats(db, tenant_id, stats)
+    return [skill_read(row, stats, recent_stats) for row in rows]
 
 
 @router.post("", response_model=SkillRead)
@@ -110,13 +129,15 @@ def create_skill(request: SkillCreateRequest, db: Session = Depends(get_session)
     db.commit()
     db.refresh(row)
     _upsert_skill_version(db, row)
-    return skill_read(row, _skill_stats(db, request.tenant_id))
+    stats = _skill_stats(db, request.tenant_id)
+    return skill_read(row, stats, _recent_skill_stats(db, request.tenant_id, stats))
 
 
 @router.get("/{skill_id}", response_model=SkillRead)
 def get_skill(skill_id: str, tenant_id: str = Query(...), db: Session = Depends(get_session)) -> SkillRead:
     row = _get_skill(db, tenant_id, skill_id)
-    return skill_read(row, _skill_stats(db, tenant_id))
+    stats = _skill_stats(db, tenant_id)
+    return skill_read(row, stats, _recent_skill_stats(db, tenant_id, stats))
 
 
 @router.put("/{skill_id}", response_model=SkillRead)
@@ -137,7 +158,8 @@ def update_skill(skill_id: str, request: SkillUpdateRequest, db: Session = Depen
     db.commit()
     db.refresh(row)
     _upsert_skill_version(db, row)
-    return skill_read(row, _skill_stats(db, request.tenant_id))
+    stats = _skill_stats(db, request.tenant_id)
+    return skill_read(row, stats, _recent_skill_stats(db, request.tenant_id, stats))
 
 
 @router.post("/{skill_id}/publish", response_model=SkillRead)
@@ -149,7 +171,8 @@ def publish_skill(skill_id: str, tenant_id: str = Query(...), db: Session = Depe
     db.commit()
     db.refresh(row)
     _upsert_skill_version(db, row)
-    return skill_read(row, _skill_stats(db, tenant_id))
+    stats = _skill_stats(db, tenant_id)
+    return skill_read(row, stats, _recent_skill_stats(db, tenant_id, stats))
 
 
 @router.post("/{skill_id}/archive", response_model=SkillRead)
@@ -161,7 +184,8 @@ def archive_skill(skill_id: str, tenant_id: str = Query(...), db: Session = Depe
     db.commit()
     db.refresh(row)
     _upsert_skill_version(db, row)
-    return skill_read(row, _skill_stats(db, tenant_id))
+    stats = _skill_stats(db, tenant_id)
+    return skill_read(row, stats, _recent_skill_stats(db, tenant_id, stats))
 
 
 @router.delete("/{skill_id}")
@@ -254,7 +278,8 @@ def rollback_skill_version(
     db.add(row)
     db.commit()
     db.refresh(row)
-    return skill_read(row, _skill_stats(db, tenant_id))
+    stats = _skill_stats(db, tenant_id)
+    return skill_read(row, stats, _recent_skill_stats(db, tenant_id, stats))
 
 
 @router.post("/distill", response_model=SkillDistillResponse)
@@ -354,6 +379,7 @@ def _sse(event: object, data: object) -> str:
 
 def _skill_stats(db: Session, tenant_id: str) -> dict[str, dict[str, float | int]]:
     stats: dict[str, dict[str, float | int]] = {}
+    legacy_versions = _legacy_stats_versions(db, tenant_id)
     events = db.exec(
         select(AgentEvent).where(
             AgentEvent.tenant_id == tenant_id,
@@ -365,14 +391,17 @@ def _skill_stats(db: Session, tenant_id: str) -> dict[str, dict[str, float | int
         skill_id = str(payload.get("to_skill_id") or "")
         if not skill_id:
             continue
-        skill_version = str(payload.get("to_skill_version") or payload.get("skill_version") or "") or None
+        skill_version = (
+            str(payload.get("to_skill_version") or payload.get("skill_version") or "")
+            or legacy_versions.get(skill_id)
+        )
         _increment_call(stats, skill_id, skill_version)
 
     feedback_rows = db.exec(
         select(SkillFeedback).where(SkillFeedback.tenant_id == tenant_id)
     ).all()
     for feedback in feedback_rows:
-        skill_version = feedback.skill_version
+        skill_version = feedback.skill_version or legacy_versions.get(feedback.skill_id)
         entries = [stats.setdefault(feedback.skill_id, _empty_stats())]
         if skill_version:
             entries.append(stats.setdefault(_stats_key(feedback.skill_id, skill_version), _empty_stats()))
@@ -405,6 +434,66 @@ def _stats_key(skill_id: str, version: str) -> str:
 
 def _stats_for(stats: dict[str, dict[str, float | int]], skill_id: str, version: str) -> dict[str, float | int]:
     return stats.get(_stats_key(skill_id, version), {})
+
+
+def _recent_skill_stats(
+    db: Session,
+    tenant_id: str,
+    stats: dict[str, dict[str, float | int]],
+) -> dict[str, dict[str, object]]:
+    recent_versions: dict[str, list[str]] = {}
+    version_rows = db.exec(
+        select(SkillVersion)
+        .where(SkillVersion.tenant_id == tenant_id)
+        .order_by(SkillVersion.skill_id.asc(), SkillVersion.created_at.desc(), SkillVersion.version.desc())
+    ).all()
+    for row in version_rows:
+        versions = recent_versions.setdefault(row.skill_id, [])
+        if len(versions) < 3:
+            versions.append(row.version)
+
+    skill_rows = db.exec(select(Skill).where(Skill.tenant_id == tenant_id)).all()
+    for row in skill_rows:
+        recent_versions.setdefault(row.skill_id, [row.version])
+
+    recent_stats: dict[str, dict[str, object]] = {}
+    for skill_id, versions in recent_versions.items():
+        entry: dict[str, object] = {
+            **_empty_stats(),
+            "recent_versions": versions,
+        }
+        for version in versions:
+            version_stats = stats.get(_stats_key(skill_id, version), {})
+            entry["call_count"] = int(entry["call_count"]) + int(version_stats.get("call_count", 0))
+            entry["positive_feedback_count"] = int(entry["positive_feedback_count"]) + int(
+                version_stats.get("positive_feedback_count", 0)
+            )
+            entry["negative_feedback_count"] = int(entry["negative_feedback_count"]) + int(
+                version_stats.get("negative_feedback_count", 0)
+            )
+        positive = int(entry["positive_feedback_count"])
+        negative = int(entry["negative_feedback_count"])
+        total = positive + negative
+        entry["positive_rate"] = round(positive / total, 4) if total else 0.0
+        entry["negative_rate"] = round(negative / total, 4) if total else 0.0
+        recent_stats[skill_id] = entry
+    return recent_stats
+
+
+def _legacy_stats_versions(db: Session, tenant_id: str) -> dict[str, str]:
+    versions: dict[str, str] = {}
+    version_rows = db.exec(
+        select(SkillVersion)
+        .where(SkillVersion.tenant_id == tenant_id)
+        .order_by(SkillVersion.created_at.asc(), SkillVersion.version.asc())
+    ).all()
+    for row in version_rows:
+        versions.setdefault(row.skill_id, row.version)
+
+    skill_rows = db.exec(select(Skill).where(Skill.tenant_id == tenant_id)).all()
+    for row in skill_rows:
+        versions.setdefault(row.skill_id, row.version)
+    return versions
 
 
 def _upsert_skill_version(db: Session, row: Skill) -> SkillVersion:

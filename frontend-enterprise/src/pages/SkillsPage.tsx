@@ -22,12 +22,16 @@ const STATUS_LABELS: Record<SkillRead['status'], { text: string; color: string }
   archived: { text: '已归档', color: 'default' },
 };
 
+type RankingMode = 'calls' | 'positive' | 'negative';
+type RankedSkill = SkillRead & { rank: number };
+
 export default function SkillsPage() {
   const navigate = useNavigate();
   const [rows, setRows] = useState<SkillRead[]>([]);
   const [versionRows, setVersionRows] = useState<SkillVersionRead[]>([]);
   const [versionSkill, setVersionSkill] = useState<SkillRead | null>(null);
   const [detailVersion, setDetailVersion] = useState<SkillVersionRead | null>(null);
+  const [rankingMode, setRankingMode] = useState<RankingMode | null>(null);
   const [versionModalTitle, setVersionModalTitle] = useState('');
   const [versionModalOpen, setVersionModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -100,6 +104,56 @@ export default function SkillsPage() {
       },
     ],
     [],
+  );
+
+  const rankingRows = useMemo(
+    () => ({
+      calls: rankByMetric(rows, 'total_call_count'),
+      positive: rankByMetric(rows, 'recent_positive_rate', 'recent_positive_feedback_count'),
+      negative: rankByMetric(rows, 'recent_negative_rate', 'recent_negative_feedback_count'),
+    }),
+    [rows],
+  );
+
+  const rankingModalRows = rankingMode ? rankingRows[rankingMode] : [];
+  const rankingModalTitle = rankingMode ? rankingTitle(rankingMode) : '完整排行';
+  const rankingModalColumns = useMemo<ColumnsType<RankedSkill>>(
+    () => [
+      { title: '排名', dataIndex: 'rank', width: 80 },
+      { title: '技能名称', dataIndex: 'name', ellipsis: true },
+      { title: '技能 ID', dataIndex: 'skill_id', ellipsis: true },
+      { title: '当前版本', dataIndex: 'version', width: 110 },
+      { title: '业务域', dataIndex: 'business_domain', width: 140, ellipsis: true },
+      {
+        title: rankingMode === 'calls' ? '全历史调用' : '近三版本',
+        width: 160,
+        render: (_, row) => (rankingMode === 'calls' ? `${row.total_call_count || 0} 次` : recentVersionsText(row)),
+      },
+      {
+        title: '近三版本调用',
+        dataIndex: 'recent_call_count',
+        width: 130,
+        render: (value: number) => `${value || 0} 次`,
+      },
+      {
+        title: '好评率',
+        dataIndex: 'recent_positive_rate',
+        width: 110,
+        render: (value: number) => percent(value),
+      },
+      {
+        title: '差评率',
+        dataIndex: 'recent_negative_rate',
+        width: 110,
+        render: (value: number) => percent(value),
+      },
+      {
+        title: '反馈数',
+        width: 110,
+        render: (_, row) => `${row.recent_positive_feedback_count || 0}/${row.recent_negative_feedback_count || 0}`,
+      },
+    ],
+    [rankingMode],
   );
 
   function openCreate() {
@@ -208,15 +262,46 @@ export default function SkillsPage() {
       </Card>
       <Row gutter={[16, 16]} className="skill-rank-row">
         <Col xs={24} lg={8}>
-          <RankingCard title="调用排行榜" rows={rankBy(rows, 'call_count')} value={(row) => `${row.call_count} 次`} />
+          <RankingCard
+            title="调用排行榜"
+            rows={rankingRows.calls.slice(0, 5)}
+            value={(row) => `${row.total_call_count || 0} 次`}
+            onMore={() => setRankingMode('calls')}
+          />
         </Col>
         <Col xs={24} lg={8}>
-          <RankingCard title="好评排行榜" rows={rankBy(rows, 'positive_rate')} value={(row) => percent(row.positive_rate)} />
+          <RankingCard
+            title="好评排行榜"
+            rows={rankingRows.positive.slice(0, 5)}
+            value={(row) => percent(row.recent_positive_rate)}
+            onMore={() => setRankingMode('positive')}
+          />
         </Col>
         <Col xs={24} lg={8}>
-          <RankingCard title="差评排行榜" rows={rankBy(rows, 'negative_rate')} value={(row) => percent(row.negative_rate)} />
+          <RankingCard
+            title="差评排行榜"
+            rows={rankingRows.negative.slice(0, 5)}
+            value={(row) => percent(row.recent_negative_rate)}
+            onMore={() => setRankingMode('negative')}
+          />
         </Col>
       </Row>
+      <Modal
+        open={Boolean(rankingMode)}
+        title={rankingModalTitle}
+        width={1080}
+        footer={null}
+        onCancel={() => setRankingMode(null)}
+      >
+        <Table
+          rowKey="skill_id"
+          dataSource={rankingModalRows}
+          columns={rankingModalColumns}
+          pagination={{ pageSize: 10, pageSizeOptions: [10, 15], showSizeChanger: true }}
+          size="small"
+          scroll={{ x: 960 }}
+        />
+      </Modal>
       <Modal
         open={versionModalOpen}
         title={versionModalTitle}
@@ -301,19 +386,29 @@ function RankingCard({
   title,
   rows,
   value,
+  onMore,
 }: {
   title: string;
-  rows: SkillRead[];
-  value: (row: SkillRead) => string;
+  rows: RankedSkill[];
+  value: (row: RankedSkill) => string;
+  onMore: () => void;
 }) {
   return (
-    <Card title={title} className="skill-ranking-card">
+    <Card
+      title={title}
+      extra={
+        <Button type="link" size="small" onClick={onMore}>
+          查看更多
+        </Button>
+      }
+      className="skill-ranking-card"
+    >
       {rows.length === 0 ? (
         <Typography.Text type="secondary">暂无数据</Typography.Text>
       ) : (
-        rows.map((row, index) => (
+        rows.map((row) => (
           <div className="skill-ranking-item" key={`${title}_${row.skill_id}`}>
-            <span className="skill-ranking-index">{index + 1}</span>
+            <span className="skill-ranking-index">{row.rank}</span>
             <span className="skill-ranking-name" title={row.name}>{row.name}</span>
             <strong>{value(row)}</strong>
           </div>
@@ -323,14 +418,36 @@ function RankingCard({
   );
 }
 
-function rankBy(rows: SkillRead[], field: 'call_count' | 'positive_rate' | 'negative_rate'): SkillRead[] {
+function rankByMetric(
+  rows: SkillRead[],
+  field: 'total_call_count' | 'recent_positive_rate' | 'recent_negative_rate',
+  tieBreaker?: 'recent_positive_feedback_count' | 'recent_negative_feedback_count',
+): RankedSkill[] {
   return [...rows]
-    .sort((a, b) => (b[field] || 0) - (a[field] || 0))
-    .slice(0, 5);
+    .sort((a, b) => {
+      const primary = (b[field] || 0) - (a[field] || 0);
+      if (primary !== 0) return primary;
+      if (tieBreaker) {
+        const secondary = (b[tieBreaker] || 0) - (a[tieBreaker] || 0);
+        if (secondary !== 0) return secondary;
+      }
+      return (b.total_call_count || 0) - (a.total_call_count || 0);
+    })
+    .map((row, index) => ({ ...row, rank: index + 1 }));
 }
 
 function percent(value: number | undefined): string {
   return `${Math.round((value || 0) * 100)}%`;
+}
+
+function rankingTitle(mode: RankingMode): string {
+  if (mode === 'calls') return '完整排行：全历史调用';
+  if (mode === 'positive') return '完整排行：近三版本好评率';
+  return '完整排行：近三版本差评率';
+}
+
+function recentVersionsText(row: SkillRead): string {
+  return row.recent_versions?.length ? row.recent_versions.join(' / ') : '-';
 }
 
 function statusText(status: string): string {

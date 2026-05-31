@@ -24,9 +24,9 @@ export default function DashboardPage() {
   }, []);
 
   const defaultModel = models.find((item) => item.is_default);
-  const totalCalls = skills.reduce((sum, item) => sum + (item.call_count || 0), 0);
-  const positiveFeedback = skills.reduce((sum, item) => sum + (item.positive_feedback_count || 0), 0);
-  const negativeFeedback = skills.reduce((sum, item) => sum + (item.negative_feedback_count || 0), 0);
+  const totalCalls = skills.reduce((sum, item) => sum + (item.total_call_count || 0), 0);
+  const positiveFeedback = skills.reduce((sum, item) => sum + (item.total_positive_feedback_count || 0), 0);
+  const negativeFeedback = skills.reduce((sum, item) => sum + (item.total_negative_feedback_count || 0), 0);
   const totalFeedback = positiveFeedback + negativeFeedback;
   const positiveRate = totalFeedback ? positiveFeedback / totalFeedback : 0;
   const negativeRate = totalFeedback ? negativeFeedback / totalFeedback : 0;
