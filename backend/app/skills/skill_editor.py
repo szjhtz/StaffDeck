@@ -77,7 +77,7 @@ class SkillEditor:
         self, raw: dict[str, Any], request: SkillRewriteRequest
     ) -> SkillRewriteResponse:
         draft = raw.get("draft_skill") if isinstance(raw.get("draft_skill"), dict) else raw
-        candidate, id_warnings = skill_card_with_unique_step_ids(SkillCard.model_validate(draft))
+        candidate = SkillCard.model_validate(draft)
         target_paths = _target_paths(request)
         merged = _merge_targets(request.current_skill, candidate, target_paths)
         merged_data = merged.model_dump(mode="json")
@@ -88,6 +88,7 @@ class SkillEditor:
         if steps:
             merged_data["steps"] = steps
             merged = SkillCard.model_validate(merged_data)
+        merged, id_warnings = skill_card_with_unique_step_ids(merged)
         assistant_message = str(raw.get("assistant_message") or "已完成选中部分的改写。").strip()
         warnings = [str(item) for item in raw.get("warnings", []) if str(item).strip()]
         warnings.extend(warning for warning in id_warnings if warning not in warnings)
@@ -97,7 +98,7 @@ class SkillEditor:
                 warnings.append(warning)
         changed_paths = [str(item) for item in raw.get("changed_paths", []) if str(item).strip()]
         if not changed_paths and merged.model_dump() != request.current_skill.model_dump():
-            changed_paths = target_paths
+            changed_paths = _changed_paths(request.current_skill, merged)
         tool_suggestions = _normalize_tool_suggestions(
             raw.get("tool_suggestions"),
             request,
@@ -167,6 +168,22 @@ def _merge_target(current: SkillCard, candidate: SkillCard, target_path: str) ->
             return SkillCard.model_validate(current_data)
 
     return current
+
+
+def _changed_paths(previous: SkillCard, next_skill: SkillCard) -> list[str]:
+    previous_data = previous.model_dump(mode="json")
+    next_data = next_skill.model_dump(mode="json")
+    changed: list[str] = []
+    if any(previous_data.get(field) != next_data.get(field) for field in BASIC_FIELDS):
+        changed.append("basic")
+    previous_steps = [step for step in previous_data.get("steps", []) if isinstance(step, dict)]
+    next_steps = [step for step in next_data.get("steps", []) if isinstance(step, dict)]
+    for index in range(max(len(previous_steps), len(next_steps))):
+        previous_step = previous_steps[index] if index < len(previous_steps) else None
+        next_step = next_steps[index] if index < len(next_steps) else None
+        if previous_step != next_step:
+            changed.append(f"steps[{index}]")
+    return changed
 
 
 def _step_target_index(current_data: dict[str, Any], path: str) -> int | None:

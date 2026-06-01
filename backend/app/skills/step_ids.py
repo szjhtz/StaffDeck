@@ -15,7 +15,7 @@ def skill_card_with_unique_step_ids(card: SkillCard) -> tuple[SkillCard, list[st
 def ensure_unique_step_ids(steps: list[Any]) -> tuple[list[dict[str, Any]], list[str]]:
     used: set[str] = set()
     normalized_steps: list[dict[str, Any]] = []
-    changed = False
+    warnings: list[str] = []
     for index, raw_step in enumerate(steps):
         if not isinstance(raw_step, dict):
             continue
@@ -28,11 +28,15 @@ def ensure_unique_step_ids(steps: list[Any]) -> tuple[list[dict[str, Any]], list
             candidate = f"{base}_{suffix}"
             suffix += 1
         if candidate != original:
-            changed = True
+            if original:
+                warnings.append(
+                    f"步骤 {index + 1} 的 step_id 从 `{original}` 自动修正为 `{candidate}`，避免重复。"
+                )
+            else:
+                warnings.append(f"步骤 {index + 1} 的 step_id 为空，已自动修正为 `{candidate}`。")
             step["step_id"] = candidate
         else:
             step["step_id"] = original
         used.add(candidate)
         normalized_steps.append(step)
-    warnings = ["检测到重复或空 step_id，已自动修正为唯一 ID。"] if changed else []
     return normalized_steps, warnings

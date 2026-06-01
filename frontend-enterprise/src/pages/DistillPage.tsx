@@ -526,6 +526,7 @@ export default function DistillPage() {
       setDraft(savedSkill.content);
       setLastSavedDraft(savedSkill.content);
       setSaveDraftSnapshot(null);
+      setHighlightedPaths([]);
       setDirtyPaths([]);
       setSaveReviewOpen(false);
       message.success('草稿已保存');
@@ -737,7 +738,6 @@ export default function DistillPage() {
     if (!pendingChange) return;
     clearAnimationTimers();
     setDraft(pendingChange.nextDraft);
-    setHighlightedPaths([]);
     setUpdatingPaths([]);
     setTextDiffs([]);
     updateMessage(pendingChange.assistantId, undefined, { actionState: 'confirmed' });
@@ -794,7 +794,6 @@ export default function DistillPage() {
           setUpdatingPaths([]);
           setDirtyPaths((current) => mergePaths(current, paths));
           const clearTimer = window.setTimeout(() => {
-            setHighlightedPaths([]);
             setTextDiffs([]);
           }, 1800);
           animationTimersRef.current.push(clearTimer);

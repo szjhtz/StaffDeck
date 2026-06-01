@@ -127,6 +127,34 @@ def test_skill_editor_merges_selected_step_id_change() -> None:
     assert response.draft_skill.steps[1].step_id == "feedback_order_result"
 
 
+def test_skill_editor_applies_step_id_corrections_to_final_draft() -> None:
+    current = _skill_card()
+    current.steps[0].step_id = "collect_info"
+    current.steps[1].step_id = "reply_result"
+    candidate = _skill_card()
+    candidate.steps[1].step_id = "collect_info"
+
+    response = SkillEditor()._normalize_response(  # noqa: SLF001
+        {
+            "assistant_message": "已修正步骤 ID。",
+            "draft_skill": candidate.model_dump(),
+        },
+        SkillRewriteRequest(
+            tenant_id="tenant_demo",
+            current_skill=current,
+            instruction="把第二步 step_id 改成 collect_info",
+            target_path="steps[1]",
+            target_paths=["steps[1]"],
+            target_label="步骤 2",
+        ),
+    )
+
+    assert response.draft_skill.steps[0].step_id == "collect_info"
+    assert response.draft_skill.steps[1].step_id == "collect_info_2"
+    assert "steps[1]" in response.changed_paths
+    assert any("步骤 2" in warning and "collect_info_2" in warning for warning in response.warnings)
+
+
 def test_skill_stats_counts_skill_entry_and_feedback() -> None:
     with _test_session() as db:
         db.add(Tenant(id="tenant_demo", name="Demo"))
