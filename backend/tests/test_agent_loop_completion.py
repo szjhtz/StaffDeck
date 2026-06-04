@@ -17,6 +17,10 @@ class FakeDb:
     def __init__(self) -> None:
         self.commits = 0
         self.refreshed: list[object] = []
+        self.added: list[object] = []
+
+    def add(self, row: object) -> None:
+        self.added.append(row)
 
     def commit(self) -> None:
         self.commits += 1
@@ -63,6 +67,37 @@ def test_tool_call_start_event_is_committed_before_external_execute() -> None:
         "tool_call_started",
         "tool_call_finished",
     ]
+
+
+def test_finalize_turn_clears_stale_last_question_for_non_question_reply() -> None:
+    loop = object.__new__(AgentLoop)
+    loop.db = FakeDb()
+    loop.events = FakeEvents()
+    session = ChatSession(
+        id="session_test",
+        tenant_id="tenant_demo",
+        last_agent_question="旧的比价回复。请问您是否决定购买 A1？",
+    )
+    reply = "好的，已为您确认退款申请。正在为您处理订单 MOCKD57272DB0E 的退款，请您耐心等待。"
+
+    loop._finalize_turn(session, "tenant_demo", reply)
+
+    assert session.last_agent_question is None
+    assert session.summary == f"最近回复：{reply[:120]}"
+    assert loop.events.records[0][2] == "assistant_message_created"
+
+
+def test_finalize_turn_keeps_current_question_reply() -> None:
+    loop = object.__new__(AgentLoop)
+    loop.db = FakeDb()
+    loop.events = FakeEvents()
+    session = ChatSession(id="session_test", tenant_id="tenant_demo")
+    reply = "请提供您的订单号？"
+
+    loop._finalize_turn(session, "tenant_demo", reply)
+
+    assert session.last_agent_question == reply
+    assert session.summary == f"最近回复：{reply[:120]}"
 
 
 def test_terminal_skill_completion_when_required_slots_are_complete() -> None:

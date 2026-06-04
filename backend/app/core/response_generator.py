@@ -75,22 +75,11 @@ class ResponseGenerator:
 
         payload = self._payload(message, session, skill, router_decision, step_result, tool_result, memory_context)
         try:
-            emitted = False
             stream = LLMClient(model_config).generate_text_stream(self._system_prompt(persona_prompt), payload)
-            if tool_result is None:
-                chunks = [chunk for chunk in stream]
-                reply = self._visible_reply_or_fallback(
-                    "".join(chunks).strip(), session, step_result, tool_result, skill
-                )
-                yield from self.chunk_text(reply)
-                return
-            for chunk in stream:
-                emitted = True
-                yield chunk
-            if not emitted:
-                yield from self.chunk_text(
-                    self._visible_reply_or_fallback(step_result.reply or "", session, step_result, tool_result, skill)
-                )
+            chunks = [chunk for chunk in stream]
+            reply = self._visible_reply_or_fallback("".join(chunks).strip(), session, step_result, tool_result, skill)
+            yield from self.chunk_text(reply)
+            return
         except LLMError:
             yield from self.chunk_text(
                 self._visible_reply_or_fallback(step_result.reply or "", session, step_result, tool_result, skill)
@@ -185,26 +174,67 @@ class ResponseGenerator:
     ) -> str:
         completion_ready = self._skill_completion_ready(session, skill, step_result, tool_result)
         completion_fallback = self._completion_fallback() if completion_ready else ""
-        candidates = (
+        candidates = self._reply_candidates(
             reply,
             step_result.reply or "",
             completion_fallback,
-            "" if completion_ready else session.last_agent_question or "",
             self._fallback_for_session(session),
-            FALLBACK_REPLY,
+            tool_result,
+            completion_ready,
         )
-        for candidate in candidates:
+        for candidate, reject_pending in candidates:
             stripped = candidate.strip()
             if not stripped:
                 continue
             if not self._is_user_safe(stripped):
                 continue
-            if self._is_unverified_pending_reply(stripped, tool_result):
+            if reject_pending and self._is_unverified_pending_reply(stripped, tool_result):
                 continue
-            if completion_ready and self._is_stale_last_question(stripped, session):
+            if self._is_stale_last_question(stripped, session):
                 continue
             return stripped
         return FALLBACK_REPLY
+
+    def _reply_candidates(
+        self,
+        model_reply: str,
+        step_reply: str,
+        completion_fallback: str,
+        session_fallback: str,
+        tool_result: ToolResult | None,
+        completion_ready: bool,
+    ) -> tuple[tuple[str, bool], ...]:
+        if completion_ready:
+            if tool_result is None:
+                return (
+                    (completion_fallback, False),
+                    (step_reply, True),
+                    (model_reply, True),
+                    (session_fallback, False),
+                    (FALLBACK_REPLY, False),
+                )
+            return (
+                (model_reply, True),
+                (completion_fallback, False),
+                (step_reply, False),
+                (session_fallback, False),
+                (FALLBACK_REPLY, False),
+            )
+        if tool_result is not None:
+            return (
+                (model_reply, True),
+                (step_reply, False),
+                (completion_fallback, False),
+                (session_fallback, False),
+                (FALLBACK_REPLY, False),
+            )
+        return (
+            (step_reply, True),
+            (model_reply, True),
+            (completion_fallback, False),
+            (session_fallback, False),
+            (FALLBACK_REPLY, False),
+        )
 
     def _progress_payload(
         self,

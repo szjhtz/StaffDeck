@@ -90,7 +90,7 @@ def test_pending_reply_without_tool_result_falls_back_to_step_reply(monkeypatch)
     assert "正在为您" not in reply
 
 
-def test_pending_step_reply_without_tool_result_falls_back_to_last_question(monkeypatch):
+def test_pending_step_reply_without_tool_result_does_not_fall_back_to_last_question(monkeypatch):
     def fake_init(self, model_config):  # noqa: ANN001
         return None
 
@@ -114,7 +114,129 @@ def test_pending_step_reply_without_tool_result_falls_back_to_last_question(monk
         model_config=None,  # type: ignore[arg-type]
     )
 
-    assert reply == "请提供您的订单号。"
+    assert reply == "请您再补充一下具体诉求，我会继续帮您处理。"
+    assert "稍候" not in reply
+    assert reply != "请提供您的订单号。"
+
+
+def test_stale_model_reply_does_not_override_current_step_reply(monkeypatch):
+    stale_price_reply = (
+        "您好，已为您查询到 A1 和 A3 的价格信息：\n\n"
+        "1. **A1 标准商品**：价格 **129.0 元**\n"
+        "2. **A3 高阶商品**：价格 **239.0 元**\n\n"
+        "请问您是否决定购买 A1？"
+    )
+    refund_reply = "好的，已为您记录退款申请。为了继续处理，请提供您的订单号。"
+
+    def fake_init(self, model_config):  # noqa: ANN001
+        return None
+
+    def fake_generate_text(self, system_prompt, payload):  # noqa: ANN001
+        assert payload["session"]["last_agent_question"] == stale_price_reply
+        assert payload["step_result"]["reply"] == refund_reply
+        return stale_price_reply
+
+    monkeypatch.setattr(LLMClient, "__init__", fake_init)
+    monkeypatch.setattr(LLMClient, "generate_text", fake_generate_text)
+
+    reply = ResponseGenerator().generate(
+        message="确认退款",
+        session=ChatSession(
+            id="session_test",
+            tenant_id="tenant_demo",
+            active_skill_id="after_sales_refund",
+            active_step_id="process_refund",
+            last_agent_question=stale_price_reply,
+        ),
+        skill=None,
+        router_decision=RouterDecision(decision="continue_current_skill"),
+        step_result=StepAgentResult(reply=refund_reply, is_step_completed=True),
+        tool_result=None,
+        model_config=None,  # type: ignore[arg-type]
+    )
+
+    assert reply == refund_reply
+    assert "比价" not in reply
+
+
+def test_stale_stream_reply_does_not_override_current_step_reply(monkeypatch):
+    stale_price_reply = "A1 和 A3 的比价结果如下。请问您是否决定购买 A1？"
+    refund_reply = "好的，已为您记录退款申请。为了继续处理，请提供您的订单号。"
+
+    def fake_init(self, model_config):  # noqa: ANN001
+        return None
+
+    def fake_generate_text_stream(self, system_prompt, payload):  # noqa: ANN001
+        assert payload["session"]["last_agent_question"] == stale_price_reply
+        yield stale_price_reply[:12]
+        yield stale_price_reply[12:]
+
+    monkeypatch.setattr(LLMClient, "__init__", fake_init)
+    monkeypatch.setattr(LLMClient, "generate_text_stream", fake_generate_text_stream)
+
+    chunks = list(
+        ResponseGenerator().generate_stream(
+            message="确认退款",
+            session=ChatSession(
+                id="session_test",
+                tenant_id="tenant_demo",
+                active_skill_id="after_sales_refund",
+                active_step_id="process_refund",
+                last_agent_question=stale_price_reply,
+            ),
+            skill=None,
+            router_decision=RouterDecision(decision="continue_current_skill"),
+            step_result=StepAgentResult(reply=refund_reply, is_step_completed=True),
+            tool_result=None,
+            model_config=None,  # type: ignore[arg-type]
+        )
+    )
+
+    reply = "".join(chunks)
+    assert reply == refund_reply
+    assert "比价" not in reply
+
+
+def test_stale_stream_reply_with_tool_result_does_not_emit_directly(monkeypatch):
+    stale_price_reply = "A1 和 A3 的比价结果如下。请问您是否决定购买 A1？"
+    refund_reply = "订单 MOCKD57272DB0E 的退款申请已提交，当前状态为处理中。"
+
+    def fake_init(self, model_config):  # noqa: ANN001
+        return None
+
+    def fake_generate_text_stream(self, system_prompt, payload):  # noqa: ANN001
+        assert payload["tool_result"]["tool_name"] == "order.refund"
+        yield stale_price_reply[:12]
+        yield stale_price_reply[12:]
+
+    monkeypatch.setattr(LLMClient, "__init__", fake_init)
+    monkeypatch.setattr(LLMClient, "generate_text_stream", fake_generate_text_stream)
+
+    chunks = list(
+        ResponseGenerator().generate_stream(
+            message="确认退款",
+            session=ChatSession(
+                id="session_test",
+                tenant_id="tenant_demo",
+                active_skill_id="after_sales_refund",
+                active_step_id="process_refund",
+                last_agent_question=stale_price_reply,
+            ),
+            skill=None,
+            router_decision=RouterDecision(decision="continue_current_skill"),
+            step_result=StepAgentResult(reply=refund_reply, is_step_completed=True),
+            tool_result=ToolResult(
+                tool_name="order.refund",
+                success=True,
+                data={"order_id": "MOCKD57272DB0E", "refund_status": "processing"},
+            ),
+            model_config=None,  # type: ignore[arg-type]
+        )
+    )
+
+    reply = "".join(chunks)
+    assert reply == refund_reply
+    assert "比价" not in reply
 
 
 def test_stream_pending_reply_without_tool_result_is_not_emitted(monkeypatch):
