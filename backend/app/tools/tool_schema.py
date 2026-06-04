@@ -65,3 +65,24 @@ class ToolTestRequest(BaseModel):
     tenant_id: str
     arguments: dict[str, Any] = Field(default_factory=dict)
 
+
+class ToolProbeRequest(BaseModel):
+    tenant_id: str
+    name: str
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = "POST"
+    url: str
+    headers: dict[str, str] = Field(default_factory=dict)
+    auth: dict[str, Any] = Field(default_factory=dict)
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+    output_schema: dict[str, Any] = Field(default_factory=dict)
+    sample_arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolProbeResponse(BaseModel):
+    success: bool
+    status_code: Optional[int] = None
+    data_preview: Optional[Any] = None
+    inferred_output_schema: dict[str, Any] = Field(default_factory=dict)
+    error: Optional[ToolError] = None

@@ -347,6 +347,8 @@ def test_normalize_response_preserves_model_tool_suggestions() -> None:
                     "type": "object",
                     "properties": {"success": {"type": "boolean"}, "data": {"type": "object"}},
                 },
+                "sample_arguments": {"product_name_1": "A1", "product_name_2": "A3"},
+                "source_excerpt": "POST /api/mock/product/compare 使用两个商品名返回比价信息。",
                 "reason": "原始流程需要商品比价能力，但当前没有对应工具。",
             }
         ],
@@ -360,6 +362,8 @@ def test_normalize_response_preserves_model_tool_suggestions() -> None:
     )
     assert [item.name for item in response.tool_suggestions] == ["product.compare"]
     assert response.tool_suggestions[0].input_schema["required"] == ["product_name_1", "product_name_2"]
+    assert response.tool_suggestions[0].sample_arguments == {"product_name_1": "A1", "product_name_2": "A3"}
+    assert response.tool_suggestions[0].source_excerpt == "POST /api/mock/product/compare 使用两个商品名返回比价信息。"
     assert any("未配置工具 product.compare" in warning for warning in response.warnings)
 
 
@@ -393,6 +397,37 @@ def test_normalize_response_does_not_suggest_tool_from_raw_text_only() -> None:
             ],
             "response_rules": [],
         }
+    }
+
+    response = SkillDistiller()._normalize_response(raw, request)  # noqa: SLF001
+
+    assert response.tool_suggestions == []
+
+
+def test_normalize_response_drops_incomplete_model_tool_suggestion() -> None:
+    request = SkillDistillRequest(
+        tenant_id="tenant_demo",
+        title="商品比价",
+        raw_content="用户提供两个商品名称，访问接口查询价格并反馈比价结果",
+        available_tools=[],
+    )
+    raw = {
+        "draft_skill": {
+            "skill_id": "compare_products",
+            "name": "商品比价",
+            "required_info": ["product_name_1", "product_name_2"],
+            "steps": [
+                {
+                    "step_id": "reply_result",
+                    "name": "反馈结果",
+                    "instruction": "反馈比价结果。",
+                    "expected_user_info": [],
+                    "allowed_actions": ["answer_user"],
+                },
+            ],
+            "response_rules": [],
+        },
+        "tool_suggestions": [{"name": "product.compare"}],
     }
 
     response = SkillDistiller()._normalize_response(raw, request)  # noqa: SLF001

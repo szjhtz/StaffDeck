@@ -21,7 +21,21 @@ export type ToolSuggestion = {
   url: string;
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown>;
+  sample_arguments?: Record<string, unknown>;
+  source_excerpt?: string;
+  probe_result?: ToolProbeResponse;
   reason: string;
+};
+
+export type ToolProbeResponse = {
+  success: boolean;
+  status_code?: number;
+  data_preview?: unknown;
+  inferred_output_schema: Record<string, unknown>;
+  error?: {
+    code: string;
+    message: string;
+  };
 };
 
 export type SkillRead = {

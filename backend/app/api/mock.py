@@ -125,6 +125,24 @@ class MockOrderAddRequest(BaseModel):
     status: str = "created"
 
 
+class MockBenefitReconcileRequest(BaseModel):
+    user_id: str
+    order_id: str
+    member_level: str | None = None
+    benefit_type: str | None = None
+    benefit_campaign_id: str | None = None
+
+
+class MockFulfillmentReroutePlanRequest(BaseModel):
+    order_id: str
+    user_id: str | None = None
+    target_address: str | None = None
+    expected_delivery_time: str | None = None
+    allow_split_package: bool = False
+    blocked_carriers: list[str] = Field(default_factory=list)
+    member_level: str | None = None
+
+
 @router.post("/order/query")
 def mock_order_query(
     request: MockOrderQueryRequest, db: Session = Depends(get_session)
@@ -190,6 +208,87 @@ def mock_product_purchase(
         metadata={"purchase_id": result["purchase_id"], "payment_method": request.payment_method},
     )
     return result
+
+
+@router.post("/member/benefit-reconcile")
+def mock_member_benefit_reconcile(request: MockBenefitReconcileRequest) -> dict[str, Any]:
+    order_id = _normalize_id(request.order_id)
+    benefit_type = (request.benefit_type or "coupon").strip().lower()
+    member_level = (request.member_level or "").strip().lower()
+    eligible = member_level in {"black", "黑金", "vip_black", "black_card"}
+    expected = [
+        {
+            "benefit_id": f"{benefit_type}_vip_shipping_delay",
+            "benefit_type": benefit_type,
+            "display_name": "会员履约保障券",
+            "amount": 30,
+            "currency": "CNY",
+        }
+    ]
+    delivered = [] if eligible else expected
+    missing = expected if eligible else []
+    return {
+        "found": True,
+        "source": "mock_member_benefit_reconcile",
+        "user_id": request.user_id,
+        "order_id": order_id,
+        "member_level": request.member_level,
+        "benefit_campaign_id": request.benefit_campaign_id,
+        "eligible": eligible,
+        "expected_benefits": expected,
+        "delivered_benefits": delivered,
+        "missing_benefits": missing,
+        "difference_reason": "benefit_delivery_task_failed" if eligible else "member_level_not_eligible",
+        "recommended_action": "auto_reissue" if eligible else "explain_ineligible",
+        "can_auto_compensate": eligible,
+        "checked_at": _now_iso(),
+    }
+
+
+@router.post("/fulfillment/reroute-plan")
+def mock_fulfillment_reroute_plan(request: MockFulfillmentReroutePlanRequest) -> dict[str, Any]:
+    order_id = _normalize_id(request.order_id)
+    high_priority = (request.member_level or "").strip().lower() in {"black", "黑金", "vip_black", "black_card"}
+    reroutable = bool(request.target_address or request.expected_delivery_time or high_priority)
+    plans = []
+    if reroutable:
+        plans = [
+            {
+                "plan_id": "same_city_priority",
+                "plan_type": "upgrade_priority",
+                "carrier": "mock_same_city",
+                "estimated_delivery_time": request.expected_delivery_time or "2026-06-04T21:00:00+08:00",
+                "risk": "可能受同城仓库存和骑手排班影响",
+                "extra_fee": 0,
+                "requires_split_package": bool(request.allow_split_package),
+            },
+            {
+                "plan_id": "keep_current_route",
+                "plan_type": "keep_route_with_urge",
+                "carrier": "mock_standard",
+                "estimated_delivery_time": "2026-06-05T12:00:00+08:00",
+                "risk": "无需改仓，时效较慢但稳定",
+                "extra_fee": 0,
+                "requires_split_package": False,
+            },
+        ]
+    return {
+        "found": True,
+        "source": "mock_fulfillment_reroute_plan",
+        "order_id": order_id,
+        "user_id": request.user_id,
+        "reroutable": reroutable,
+        "current_route": {
+            "warehouse": "mock_east_warehouse",
+            "carrier": "mock_standard",
+            "status": "allocated",
+        },
+        "plans": plans,
+        "recommended_plan_id": plans[0]["plan_id"] if plans else None,
+        "requires_confirmation": reroutable,
+        "failure_reason": None if reroutable else "order_not_in_reroute_window",
+        "checked_at": _now_iso(),
+    }
 
 
 @router.post("/product/price-query")

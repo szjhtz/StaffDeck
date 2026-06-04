@@ -1,10 +1,12 @@
 import pytest
+import httpx
 from fastapi import HTTPException
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.api.tools import delete_tool
+from app.api.tools import delete_tool, probe_tool
 from app.db.models import Tenant, Tool
+from app.tools.tool_schema import ToolProbeRequest
 
 
 def test_delete_tool_removes_tenant_tool() -> None:
@@ -47,6 +49,87 @@ def test_delete_tool_is_tenant_scoped() -> None:
 
         assert exc_info.value.status_code == 404
         assert db.get(Tool, tool.id) is not None
+
+
+def test_probe_tool_success_infers_output_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def request(self, method, url, headers=None, json=None, params=None):
+            assert method == "POST"
+            assert url == "http://localhost:8000/api/mock/member/benefit-reconcile"
+            assert json == {"user_id": "user_demo", "order_id": "A12345"}
+            return httpx.Response(
+                200,
+                json={
+                    "found": True,
+                    "missing_benefits": [{"benefit_id": "coupon_001", "amount": 30}],
+                },
+            )
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.commit()
+
+        result = probe_tool(
+            ToolProbeRequest(
+                tenant_id="tenant_demo",
+                name="member.benefit_reconcile",
+                method="POST",
+                url="/api/mock/member/benefit-reconcile",
+                sample_arguments={"user_id": "user_demo", "order_id": "A12345"},
+            ),
+            db,
+        )
+
+        assert result.success is True
+        assert result.status_code == 200
+        assert result.inferred_output_schema["properties"]["found"]["type"] == "boolean"
+        assert result.inferred_output_schema["properties"]["missing_benefits"]["type"] == "array"
+
+
+def test_probe_tool_http_error_returns_stable_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def request(self, method, url, headers=None, json=None, params=None):
+            return httpx.Response(404, json={"detail": "not found"})
+
+    monkeypatch.setattr(httpx, "Client", FakeClient)
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.commit()
+
+        result = probe_tool(
+            ToolProbeRequest(
+                tenant_id="tenant_demo",
+                name="missing.tool",
+                method="POST",
+                url="http://example.invalid/missing",
+                sample_arguments={"query": "x"},
+            ),
+            db,
+        )
+
+        assert result.success is False
+        assert result.status_code == 404
+        assert result.error is not None
+        assert result.error.code == "HTTP_ERROR"
 
 
 def _test_session():

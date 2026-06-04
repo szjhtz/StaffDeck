@@ -37,6 +37,9 @@ class ToolSuggestion(BaseModel):
     url: str = ""
     input_schema: dict[str, Any] = Field(default_factory=dict)
     output_schema: dict[str, Any] = Field(default_factory=dict)
+    sample_arguments: dict[str, Any] = Field(default_factory=dict)
+    source_excerpt: Optional[str] = None
+    probe_result: Optional[dict[str, Any]] = None
     reason: str = ""
 
 

@@ -2,10 +2,14 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.api.mock import (
+    MockBenefitReconcileRequest,
+    MockFulfillmentReroutePlanRequest,
     MockOrderAddRequest,
     MockOrderQueryRequest,
     MockProductPriceQueryRequest,
     MockProductPurchaseRequest,
+    mock_fulfillment_reroute_plan,
+    mock_member_benefit_reconcile,
     mock_product_price_query,
     mock_order_add,
     mock_order_archive_query,
@@ -125,6 +129,48 @@ def test_product_price_query_is_not_seeded_as_configured_tool() -> None:
     tool_names = {tool["name"] for tool in DEMO_TOOLS}
 
     assert "product.price_query" not in tool_names
+
+
+def test_member_benefit_reconcile_returns_missing_benefits() -> None:
+    result = mock_member_benefit_reconcile(
+        MockBenefitReconcileRequest(
+            user_id="user_demo",
+            order_id="A12345",
+            member_level="black",
+            benefit_type="coupon",
+            benefit_campaign_id="vip_2026_midyear",
+        )
+    )
+
+    assert result["found"] is True
+    assert result["eligible"] is True
+    assert result["missing_benefits"]
+    assert result["recommended_action"] == "auto_reissue"
+
+
+def test_fulfillment_reroute_plan_returns_candidate_plans() -> None:
+    result = mock_fulfillment_reroute_plan(
+        MockFulfillmentReroutePlanRequest(
+            order_id="A12345",
+            user_id="user_demo",
+            target_address="上海市浦东新区示例路 88 号",
+            expected_delivery_time="2026-06-04T20:00:00+08:00",
+            allow_split_package=True,
+            member_level="black",
+        )
+    )
+
+    assert result["found"] is True
+    assert result["reroutable"] is True
+    assert result["recommended_plan_id"] == "same_city_priority"
+    assert result["plans"]
+
+
+def test_discovery_mock_apis_are_not_seeded_as_configured_tools() -> None:
+    tool_names = {tool["name"] for tool in DEMO_TOOLS}
+
+    assert "member.benefit_reconcile" not in tool_names
+    assert "fulfillment.reroute_plan" not in tool_names
 
 
 def _test_session() -> Session:

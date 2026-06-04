@@ -699,33 +699,23 @@ def _normalize_tool_suggestions(
 
 def _tool_suggestion_from_dict(item: dict[str, Any], request: Any) -> ToolSuggestion | None:
     name = _string(item.get("name"), "")
-    if not name:
+    url = _string(item.get("url"), "")
+    input_schema = item.get("input_schema")
+    output_schema = item.get("output_schema")
+    if not name or not url or not isinstance(input_schema, dict) or not isinstance(output_schema, dict):
         return None
-    default = _default_tool_suggestion(name, request, _string(item.get("reason"), "模型建议新增该工具。"))
     return ToolSuggestion(
         name=name,
-        display_name=_string(item.get("display_name"), default.display_name or name),
-        description=_string(item.get("description"), default.description or ""),
-        method=_tool_method(item.get("method"), default.method),
-        url=_string(item.get("url"), default.url),
-        input_schema=item.get("input_schema") if isinstance(item.get("input_schema"), dict) else default.input_schema,
-        output_schema=item.get("output_schema") if isinstance(item.get("output_schema"), dict) else default.output_schema,
-        reason=_string(item.get("reason"), default.reason),
-    )
-
-
-def _default_tool_suggestion(name: str, request: Any, reason: str) -> ToolSuggestion:
-    title = _request_title(request)
-    properties = {"query": {"type": "string", "description": "用户请求或业务对象"}}
-    return ToolSuggestion(
-        name=name,
-        display_name=f"{title or name}工具",
-        description=f"用于支撑「{title or name}」流程中的外部查询、核实、创建或处理动作。",
-        method="POST",
-        url=f"/api/mock/{name.replace('.', '/')}",
-        input_schema={"type": "object", "properties": properties, "required": list(properties.keys())},
-        output_schema={"type": "object", "properties": {"success": {"type": "boolean"}, "data": {"type": "object"}}},
-        reason=reason,
+        display_name=_string(item.get("display_name"), name),
+        description=_string(item.get("description"), ""),
+        method=_tool_method(item.get("method"), "POST"),
+        url=url,
+        input_schema=input_schema,
+        output_schema=output_schema,
+        sample_arguments=item.get("sample_arguments") if isinstance(item.get("sample_arguments"), dict) else {},
+        source_excerpt=_string(item.get("source_excerpt"), "") or None,
+        probe_result=item.get("probe_result") if isinstance(item.get("probe_result"), dict) else None,
+        reason=_string(item.get("reason"), "模型根据流程中的接口说明生成该工具草案。"),
     )
 
 

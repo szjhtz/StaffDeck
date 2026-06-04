@@ -33,6 +33,7 @@ Base URL: `http://localhost:8000`
 
 - `GET /api/enterprise/tools?tenant_id=`
 - `POST /api/enterprise/tools`
+- `POST /api/enterprise/tools/probe`
 - `GET /api/enterprise/tools/{tool_id}?tenant_id=`
 - `PUT /api/enterprise/tools/{tool_id}`
 - `POST /api/enterprise/tools/{tool_id}/test`

@@ -1041,6 +1041,23 @@ body.skill-distill-fixed .content {
   line-height: 1.55;
 }
 
+.skill-tool-suggestion-meta {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.skill-tool-suggestion-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tool-suggestion-detail {
   display: grid;
   gap: 10px;

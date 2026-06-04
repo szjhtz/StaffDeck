@@ -28,7 +28,7 @@ import {
 } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, streamPost, TENANT_ID } from '../api/client';
-import type { SkillCard, SkillRead, ToolRead, ToolSuggestion } from '../types';
+import type { SkillCard, SkillRead, ToolProbeResponse, ToolRead, ToolSuggestion } from '../types';
 
 type ChatItem = {
   id: string;
@@ -48,6 +48,7 @@ type ChatItem = {
 
 type ToolSuggestionItem = ToolSuggestion & {
   status?: 'pending' | 'created' | 'rejected';
+  probeStatus?: 'idle' | 'probing' | 'success' | 'error';
 };
 
 type UploadAttachment = {
@@ -170,6 +171,8 @@ export default function DistillPage() {
   const [attachments, setAttachments] = useState<UploadAttachment[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [toolDetail, setToolDetail] = useState<ToolSuggestionItem | null>(null);
+  const [toolDetailMessageId, setToolDetailMessageId] = useState<string | null>(null);
+  const [probeArgsText, setProbeArgsText] = useState('');
   const [tools, setTools] = useState<ToolRead[]>([]);
   const [streamStatus, setStreamStatus] = useState('');
   const [editingMessage, setEditingMessage] = useState<EditingMessage | null>(null);
@@ -709,8 +712,86 @@ export default function DistillPage() {
     uploadFiles(Array.from(event.dataTransfer.files || []));
   }
 
+  function openToolDetail(messageId: string, suggestion: ToolSuggestionItem) {
+    setToolDetailMessageId(messageId);
+    setToolDetail(suggestion);
+    setProbeArgsText(JSON.stringify(suggestion.sample_arguments || {}, null, 2));
+  }
+
+  async function probeToolSuggestion(
+    messageId: string,
+    suggestion: ToolSuggestionItem,
+    sampleArguments?: Record<string, unknown>,
+  ) {
+    if (loading || suggestion.probeStatus === 'probing') return;
+    const args = sampleArguments || suggestion.sample_arguments || {};
+    if (Object.keys(args).length === 0) {
+      message.warning('缺少样例参数，无法测试接口');
+      return;
+    }
+    setToolSuggestionPatch(messageId, suggestion.name, { probeStatus: 'probing' });
+    try {
+      const payload = {
+        ...toolPayloadFromSuggestion(suggestion, (pendingChange?.nextDraft || draft)?.skill_id),
+        sample_arguments: args,
+      };
+      const result = await api.post<ToolProbeResponse>('/api/enterprise/tools/probe', payload);
+      const nextOutputSchema = result.success && result.inferred_output_schema
+        ? result.inferred_output_schema
+        : suggestion.output_schema;
+      setToolSuggestionPatch(messageId, suggestion.name, {
+        probeStatus: result.success ? 'success' : 'error',
+        probe_result: result,
+        sample_arguments: args,
+        output_schema: nextOutputSchema || {},
+      });
+      if (result.success) {
+        message.success('接口测试成功');
+      } else {
+        message.error(result.error?.message || '接口测试失败');
+      }
+    } catch (error) {
+      const result: ToolProbeResponse = {
+        success: false,
+        inferred_output_schema: {},
+        error: { code: 'CLIENT_ERROR', message: error instanceof Error ? error.message : '接口测试失败' },
+      };
+      setToolSuggestionPatch(messageId, suggestion.name, {
+        probeStatus: 'error',
+        probe_result: result,
+      });
+      message.error(result.error?.message || '接口测试失败');
+    }
+  }
+
+  function applyProbeArgumentsFromDetail() {
+    if (!toolDetail || !toolDetailMessageId) return;
+    const parsed = parseJsonObject(probeArgsText);
+    if (!parsed) {
+      message.error('样例参数必须是 JSON 对象');
+      return;
+    }
+    setToolSuggestionPatch(toolDetailMessageId, toolDetail.name, { sample_arguments: parsed });
+    setToolDetail({ ...toolDetail, sample_arguments: parsed });
+    message.success('样例参数已更新');
+  }
+
+  function probeToolDetail() {
+    if (!toolDetail || !toolDetailMessageId) return;
+    const parsed = parseJsonObject(probeArgsText);
+    if (!parsed) {
+      message.error('样例参数必须是 JSON 对象');
+      return;
+    }
+    void probeToolSuggestion(toolDetailMessageId, { ...toolDetail, sample_arguments: parsed }, parsed);
+  }
+
   async function confirmToolSuggestion(messageId: string, suggestion: ToolSuggestionItem) {
     if (loading) return;
+    if (!suggestion.probe_result?.success) {
+      message.warning('请先测试接口成功后再新增工具');
+      return;
+    }
     const activeDraft = pendingChange?.nextDraft || draft;
     try {
       let createdTool: ToolRead;
@@ -756,18 +837,23 @@ export default function DistillPage() {
   }
 
   function setToolSuggestionStatus(messageId: string, toolName: string, status: ToolSuggestionItem['status']) {
+    setToolSuggestionPatch(messageId, toolName, { status });
+  }
+
+  function setToolSuggestionPatch(messageId: string, toolName: string, patch: Partial<ToolSuggestionItem>) {
     setMessages((current) =>
       current.map((item) =>
         item.id === messageId
           ? {
               ...item,
               toolSuggestions: (item.toolSuggestions || []).map((suggestion) =>
-                suggestion.name === toolName ? { ...suggestion, status } : suggestion,
+                suggestion.name === toolName ? { ...suggestion, ...patch } : suggestion,
               ),
             }
           : item,
       ),
     );
+    setToolDetail((current) => (current?.name === toolName ? { ...current, ...patch } : current));
   }
 
   function closeSaveReview() {
@@ -1267,18 +1353,36 @@ export default function DistillPage() {
                             <div>
                               <div className="skill-tool-suggestion-title">
                                 建议新增工具：{suggestion.display_name || suggestion.name}
+                                {suggestion.probe_result?.success && <Tag color="green">测试通过</Tag>}
+                                {suggestion.probe_result && !suggestion.probe_result.success && <Tag color="red">测试失败</Tag>}
                               </div>
                               <div className="skill-tool-suggestion-desc">
                                 {suggestion.reason || suggestion.description || suggestion.name}
                               </div>
+                              <div className="skill-tool-suggestion-meta">
+                                <Tag>{suggestion.method || 'POST'}</Tag>
+                                <span>{suggestion.url || '-'}</span>
+                              </div>
                             </div>
                             <Space>
-                              <Button size="small" onClick={() => setToolDetail(suggestion)}>
+                              <Button size="small" onClick={() => openToolDetail(item.id, suggestion)}>
                                 详情
+                              </Button>
+                              <Button
+                                size="small"
+                                loading={suggestion.probeStatus === 'probing'}
+                                onClick={() => void probeToolSuggestion(item.id, suggestion)}
+                              >
+                                测试接口
                               </Button>
                               {suggestion.status !== 'created' && suggestion.status !== 'rejected' && (
                                 <>
-                                  <Button size="small" type="primary" onClick={() => void confirmToolSuggestion(item.id, suggestion)}>
+                                  <Button
+                                    size="small"
+                                    type="primary"
+                                    disabled={!suggestion.probe_result?.success}
+                                    onClick={() => void confirmToolSuggestion(item.id, suggestion)}
+                                  >
                                     确认
                                   </Button>
                                   <Button size="small" onClick={() => rejectToolSuggestion(item.id, suggestion.name)}>
@@ -1513,7 +1617,15 @@ export default function DistillPage() {
       <Modal
         open={Boolean(toolDetail)}
         title="工具详情"
-        footer={null}
+        footer={
+          <Space>
+            <Button onClick={() => setToolDetail(null)}>关闭</Button>
+            <Button onClick={applyProbeArgumentsFromDetail}>应用样例参数</Button>
+            <Button type="primary" loading={toolDetail?.probeStatus === 'probing'} onClick={probeToolDetail}>
+              测试接口
+            </Button>
+          </Space>
+        }
         width={760}
         onCancel={() => setToolDetail(null)}
       >
@@ -1525,10 +1637,23 @@ export default function DistillPage() {
             <div><strong>方法：</strong>{toolDetail.method}</div>
             <div><strong>URL：</strong>{toolDetail.url}</div>
             <div><strong>原因：</strong>{toolDetail.reason || '-'}</div>
+            <div><strong>来源：</strong>{toolDetail.source_excerpt || '-'}</div>
+            <Typography.Text strong>样例参数</Typography.Text>
+            <Input.TextArea
+              value={probeArgsText}
+              autoSize={{ minRows: 4, maxRows: 10 }}
+              onChange={(event) => setProbeArgsText(event.target.value)}
+            />
             <Typography.Text strong>输入 Schema</Typography.Text>
             <pre>{JSON.stringify(toolDetail.input_schema || {}, null, 2)}</pre>
             <Typography.Text strong>输出 Schema</Typography.Text>
             <pre>{JSON.stringify(toolDetail.output_schema || {}, null, 2)}</pre>
+            {toolDetail.probe_result && (
+              <>
+                <Typography.Text strong>测试结果</Typography.Text>
+                <pre>{JSON.stringify(toolDetail.probe_result, null, 2)}</pre>
+              </>
+            )}
           </div>
         )}
       </Modal>
@@ -2277,6 +2402,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
+function parseJsonObject(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function slugSegment(value: string): string {
   return value
     .toLowerCase()
@@ -2389,8 +2523,16 @@ function normalizeToolSuggestions(value: unknown): ToolSuggestionItem[] {
       url: typeof item.url === 'string' ? item.url : '',
       input_schema: isRecord(item.input_schema) ? item.input_schema : {},
       output_schema: isRecord(item.output_schema) ? item.output_schema : {},
+      sample_arguments: isRecord(item.sample_arguments) ? item.sample_arguments : {},
+      source_excerpt: typeof item.source_excerpt === 'string' ? item.source_excerpt : undefined,
+      probe_result: isRecord(item.probe_result) ? item.probe_result as ToolProbeResponse : undefined,
       reason: typeof item.reason === 'string' ? item.reason : '',
       status: 'pending' as const,
+      probeStatus: isRecord(item.probe_result)
+        ? Boolean(item.probe_result.success)
+          ? 'success' as const
+          : 'error' as const
+        : 'idle' as const,
     }))
     .filter((item) => item.name);
 }
@@ -2405,7 +2547,7 @@ function compactWarning(warning: string): string {
       text.includes('tool_suggestions') ||
       text.includes('allowed_actions'))
   ) {
-    return `未配置工具 ${toolName}，已生成新增建议。`;
+    return `未配置工具 ${toolName}，需提供完整接口信息后新增。`;
   }
   if (text.includes('没有任何工具支持') || (text.includes('available_tools') && text.includes('工具'))) {
     return '缺少可用工具，需先新增工具后再执行该流程。';
@@ -2731,6 +2873,9 @@ function buildToolDescriptionMap(tools: ToolRead[]): ToolDescriptionMap {
 }
 
 function toolPayloadFromSuggestion(suggestion: ToolSuggestionItem, skillId?: string): Record<string, unknown> {
+  const outputSchema = suggestion.probe_result?.success && suggestion.probe_result.inferred_output_schema
+    ? suggestion.probe_result.inferred_output_schema
+    : suggestion.output_schema || {};
   return {
     tenant_id: TENANT_ID,
     name: suggestion.name,
@@ -2741,13 +2886,16 @@ function toolPayloadFromSuggestion(suggestion: ToolSuggestionItem, skillId?: str
     headers: {},
     auth: {},
     input_schema: suggestion.input_schema || {},
-    output_schema: suggestion.output_schema || {},
+    output_schema: outputSchema,
     allowed_skills: skillId ? [skillId] : [],
     enabled: true,
   };
 }
 
 function toolReadFromSuggestion(suggestion: ToolSuggestionItem, skillId?: string): ToolRead {
+  const outputSchema = suggestion.probe_result?.success && suggestion.probe_result.inferred_output_schema
+    ? suggestion.probe_result.inferred_output_schema
+    : suggestion.output_schema || {};
   return {
     id: suggestion.name,
     tenant_id: TENANT_ID,
@@ -2759,7 +2907,7 @@ function toolReadFromSuggestion(suggestion: ToolSuggestionItem, skillId?: string
     headers: {},
     auth: {},
     input_schema: suggestion.input_schema || {},
-    output_schema: suggestion.output_schema || {},
+    output_schema: outputSchema,
     allowed_skills: skillId ? [skillId] : [],
     enabled: true,
     updated_at: new Date().toISOString(),
@@ -2779,8 +2927,13 @@ function buildToolIntegrationInstruction(suggestion: ToolSuggestionItem): string
     name: suggestion.name,
     display_name: displayName,
     description: suggestion.description || '',
+    method: suggestion.method || 'POST',
+    url: suggestion.url || '',
     input_schema: suggestion.input_schema || {},
-    output_schema: suggestion.output_schema || {},
+    output_schema: suggestion.probe_result?.success && suggestion.probe_result.inferred_output_schema
+      ? suggestion.probe_result.inferred_output_schema
+      : suggestion.output_schema || {},
+    sample_arguments: suggestion.sample_arguments || {},
   };
   return [
     `工具「${displayName}」（${suggestion.name}）已经新增到工具配置。`,

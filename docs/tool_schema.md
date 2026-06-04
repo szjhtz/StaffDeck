@@ -32,3 +32,21 @@ First version tools are HTTP APIs.
 }
 ```
 
+Unpersisted tool suggestions can be probed before creation:
+
+```json
+{
+  "tenant_id": "tenant_demo",
+  "name": "member.benefit_reconcile",
+  "method": "POST",
+  "url": "http://localhost:8000/api/mock/member/benefit-reconcile",
+  "headers": {},
+  "auth": {},
+  "input_schema": {},
+  "output_schema": {},
+  "sample_arguments": {
+    "user_id": "user_demo",
+    "order_id": "A12345"
+  }
+}
+```
