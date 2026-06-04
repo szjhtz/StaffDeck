@@ -51,6 +51,12 @@ type ToolSuggestionItem = ToolSuggestion & {
   probeStatus?: 'idle' | 'probing' | 'success' | 'error';
 };
 
+type ProbeToolOptions = {
+  sampleArguments?: Record<string, unknown>;
+  silent?: boolean;
+  allowWhileLoading?: boolean;
+};
+
 type UploadAttachment = {
   id: string;
   name: string;
@@ -455,6 +461,9 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
               },
             );
             setStreamStatus('生成完成');
+            if (nextToolSuggestions.length > 0) {
+              void autoProbeToolSuggestions(assistantId, nextToolSuggestions);
+            }
           }
         },
         controller.signal,
@@ -559,6 +568,9 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                   ? [{ kind: 'skill_change', label: `改写：${changedLabel}`, skillId: nextDraft.skill_id }]
                   : [],
               });
+            }
+            if (nextToolSuggestions.length > 0) {
+              void autoProbeToolSuggestions(assistantId, nextToolSuggestions);
             }
           }
         },
@@ -733,16 +745,59 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
     setProbeArgsText(JSON.stringify(suggestion.sample_arguments || {}, null, 2));
   }
 
+  async function autoProbeToolSuggestions(messageId: string, suggestions: ToolSuggestionItem[]) {
+    const pendingSuggestions = suggestions.filter((suggestion) => !suggestion.probe_result);
+    if (pendingSuggestions.length === 0) return;
+
+    appendThinkingDetail(
+      messageId,
+      `正在抽取工具：${pendingSuggestions.map((item) => item.display_name || item.name).join('、')}`,
+    );
+    appendThinkingDetail(messageId, '正在测试工具接口');
+    setStreamStatus('正在测试工具接口');
+
+    let successCount = 0;
+    let failureCount = 0;
+    for (const suggestion of pendingSuggestions) {
+      const result = await probeToolSuggestion(messageId, suggestion, {
+        silent: true,
+        allowWhileLoading: true,
+      });
+      if (!result) {
+        failureCount += 1;
+        appendThinkingDetail(messageId, `工具测试失败：${suggestion.display_name || suggestion.name}`);
+        continue;
+      }
+      if (result.success) {
+        successCount += 1;
+        appendThinkingDetail(messageId, `工具测试成功：${suggestion.display_name || suggestion.name}`);
+      } else {
+        failureCount += 1;
+        const reason = result.error?.message ? `，${result.error.message}` : '';
+        appendThinkingDetail(messageId, `工具测试失败：${suggestion.display_name || suggestion.name}${reason}`);
+      }
+    }
+
+    appendThinkingDetail(messageId, `工具测试完成：${successCount} 个成功，${failureCount} 个失败`);
+    setStreamStatus('工具测试完成');
+  }
+
   async function probeToolSuggestion(
     messageId: string,
     suggestion: ToolSuggestionItem,
-    sampleArguments?: Record<string, unknown>,
-  ) {
-    if (loading || suggestion.probeStatus === 'probing') return;
-    const args = sampleArguments || suggestion.sample_arguments || {};
+    options: ProbeToolOptions = {},
+  ): Promise<ToolProbeResponse | null> {
+    if ((!options.allowWhileLoading && loading) || suggestion.probeStatus === 'probing') return null;
+    const args = options.sampleArguments || suggestion.sample_arguments || {};
     if (Object.keys(args).length === 0) {
-      message.warning('缺少样例参数，无法测试接口');
-      return;
+      if (!options.silent) message.warning('缺少样例参数，无法测试接口');
+      const result: ToolProbeResponse = {
+        success: false,
+        inferred_output_schema: {},
+        error: { code: 'MISSING_SAMPLE_ARGUMENTS', message: '缺少样例参数，无法测试接口' },
+      };
+      setToolSuggestionPatch(messageId, suggestion.name, { probeStatus: 'error', probe_result: result });
+      return result;
     }
     setToolSuggestionPatch(messageId, suggestion.name, { probeStatus: 'probing' });
     try {
@@ -761,10 +816,11 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
         output_schema: nextOutputSchema || {},
       });
       if (result.success) {
-        message.success('接口测试成功');
+        if (!options.silent) message.success('接口测试成功');
       } else {
-        message.error(result.error?.message || '接口测试失败');
+        if (!options.silent) message.error(result.error?.message || '接口测试失败');
       }
+      return result;
     } catch (error) {
       const result: ToolProbeResponse = {
         success: false,
@@ -775,7 +831,8 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
         probeStatus: 'error',
         probe_result: result,
       });
-      message.error(result.error?.message || '接口测试失败');
+      if (!options.silent) message.error(result.error?.message || '接口测试失败');
+      return result;
     }
   }
 
@@ -798,7 +855,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
       message.error('样例参数必须是 JSON 对象');
       return;
     }
-    void probeToolSuggestion(toolDetailMessageId, { ...toolDetail, sample_arguments: parsed }, parsed);
+    void probeToolSuggestion(toolDetailMessageId, { ...toolDetail, sample_arguments: parsed }, { sampleArguments: parsed });
   }
 
   async function confirmToolSuggestion(messageId: string, suggestion: ToolSuggestionItem) {
@@ -1368,6 +1425,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                             <div>
                               <div className="skill-tool-suggestion-title">
                                 建议新增工具：{suggestion.display_name || suggestion.name}
+                                {suggestion.probeStatus === 'probing' && <Tag color="processing">测试中</Tag>}
                                 {suggestion.probe_result?.success && <Tag color="green">测试通过</Tag>}
                                 {suggestion.probe_result && !suggestion.probe_result.success && <Tag color="red">测试失败</Tag>}
                               </div>
@@ -1382,13 +1440,6 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
                             <Space>
                               <Button size="small" onClick={() => openToolDetail(item.id, suggestion)}>
                                 详情
-                              </Button>
-                              <Button
-                                size="small"
-                                loading={suggestion.probeStatus === 'probing'}
-                                onClick={() => void probeToolSuggestion(item.id, suggestion)}
-                              >
-                                测试接口
                               </Button>
                               {suggestion.status !== 'created' && suggestion.status !== 'rejected' && (
                                 <>
@@ -1637,7 +1688,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
             <Button onClick={() => setToolDetail(null)}>关闭</Button>
             <Button onClick={applyProbeArgumentsFromDetail}>应用样例参数</Button>
             <Button type="primary" loading={toolDetail?.probeStatus === 'probing'} onClick={probeToolDetail}>
-              测试接口
+              {toolDetail?.probe_result ? '再次测试' : '测试接口'}
             </Button>
           </Space>
         }

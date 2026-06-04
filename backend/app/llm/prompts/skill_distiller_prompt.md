@@ -34,7 +34,10 @@ draft_skill 必须包含 slot_filling_policy，且 enabled=true、multi_slot_per
 最后一个步骤必须允许 answer_user，并要求给用户明确结果；如果工具失败或文档缺失无法闭环，应说明转人工或缺失信息，而不是承诺稍后继续。
 response_rules 必须包含闭环约束：不得只回复请稍候；需要外部事实时必须调用工具或转人工；工具成功后必须给出最终业务结果。
 response_rules 必须包含自适应推进约束：步骤是目标不是脚本；已满足的信息不得重复追问；模型应推进到下一缺失信息、工具调用或最终回复。
-如果原始流程描述了工具、接口或系统能力，但 available_tools 中不存在能覆盖该能力的工具，不要把不存在的工具写入 allowed_actions；请由你根据原始文档语义在 tool_suggestions 中给出建议新增工具。只有当原文给出或足以可靠推断 method、url、输入参数和返回字段时，才输出工具草案；如果只写了“后台查一下”“调用某系统”但缺少接口信息，请在 warnings 中说明工具信息不足，不要臆造工具。
+如果原始流程描述了工具、接口或系统能力，但 available_tools 中不存在能覆盖该能力的工具，不要把不存在的工具写入 allowed_actions；请由你根据原始文档语义在 tool_suggestions 中给出建议新增工具。
+只有当原文明确给出可访问 API/服务入口（例如 http://...、https://... 或明确的内部路径）、请求方法或可推断请求方法、输入参数，并说明返回结果可用于什么判断时，才输出工具草案。
+如果原文只是写“补发权益”“提交改派”“创建人工工单”“后台查一下”“调用某系统”“提交处理”等业务动作，但没有具体 API 地址或服务入口，不要臆造 `/api/...` 路径，也不要输出工具草案；只在 warnings 中简短说明该动作缺少可配置接口。
+tool_suggestions 中的 url 必须逐字来自原始文档中的接口地址或路径，可以把文档中的完整 URL 归一成 path，但不得根据业务名称自行生成新 path。
 工具草案必须包含 name、display_name、description、method、url、input_schema、output_schema、reason；如果原文提供样例请求，请同时输出 sample_arguments；如果能定位来源句子，请输出 source_excerpt。服务端不会从原始文本用规则抽取工具名，也不会替你补默认工具建议。
 输出字段顺序必须将 response_rules 放在 steps 之前，便于前端流式展示基础约束后再展示流程步骤。
 

@@ -90,8 +90,30 @@ start_service() {
 
   : > "$log_file"
   : > "$err_file"
-  /bin/zsh -lc "cd '$cwd' && $command" >"$log_file" 2>"$err_file" &
-  local pid="$!"
+  if [[ "$DETACH" == "1" ]]; then
+    local pid
+    pid="$(
+      python3 -c '
+import subprocess
+import sys
+
+cwd, command, log_file, err_file = sys.argv[1:5]
+with open(log_file, "ab", buffering=0) as stdout, open(err_file, "ab", buffering=0) as stderr:
+    process = subprocess.Popen(
+        ["/bin/zsh", "-lc", command],
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=stdout,
+        stderr=stderr,
+        start_new_session=True,
+    )
+print(process.pid)
+' "$cwd" "$command" "$log_file" "$err_file"
+    )"
+  else
+    /bin/zsh -lc "cd '$cwd' && $command" >"$log_file" 2>"$err_file" &
+    local pid="$!"
+  fi
   echo "$pid" > "$pid_file"
   echo "$pid"
 }

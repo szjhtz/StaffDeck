@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from time import sleep
 from typing import Any
+from urllib.parse import urlparse
 
 from app.db.models import ModelConfig
 from app.llm import LLMClient, LLMError
@@ -704,6 +705,8 @@ def _tool_suggestion_from_dict(item: dict[str, Any], request: Any) -> ToolSugges
     output_schema = item.get("output_schema")
     if not name or not url or not isinstance(input_schema, dict) or not isinstance(output_schema, dict):
         return None
+    if not _tool_suggestion_url_in_source(url, request):
+        return None
     return ToolSuggestion(
         name=name,
         display_name=_string(item.get("display_name"), name),
@@ -717,6 +720,51 @@ def _tool_suggestion_from_dict(item: dict[str, Any], request: Any) -> ToolSugges
         probe_result=item.get("probe_result") if isinstance(item.get("probe_result"), dict) else None,
         reason=_string(item.get("reason"), "模型根据流程中的接口说明生成该工具草案。"),
     )
+
+
+def _tool_suggestion_url_in_source(url: str, request: Any) -> bool:
+    source = _tool_suggestion_source_text(request)
+    if not source:
+        return False
+    return any(candidate in source for candidate in _tool_url_candidates(url))
+
+
+def _tool_suggestion_source_text(request: Any) -> str:
+    parts: list[str] = []
+    for attr in ("raw_content", "instruction", "title", "business_domain", "target_label"):
+        value = getattr(request, attr, None)
+        if isinstance(value, str) and value.strip():
+            parts.append(value)
+    current_skill = getattr(request, "current_skill", None)
+    if current_skill is not None:
+        try:
+            parts.append(json.dumps(current_skill.model_dump(mode="json"), ensure_ascii=False))
+        except (TypeError, ValueError, AttributeError):
+            parts.append(str(current_skill))
+    conversation = getattr(request, "conversation", None)
+    if isinstance(conversation, list):
+        for item in conversation[-12:]:
+            if isinstance(item, dict):
+                content = item.get("content")
+                if isinstance(content, str) and content.strip():
+                    parts.append(content)
+    return "\n".join(parts)
+
+
+def _tool_url_candidates(url: str) -> list[str]:
+    normalized = url.strip().strip("`'\"<>，。；;,")
+    if not normalized:
+        return []
+    candidates = {normalized}
+    parsed_source = normalized
+    if normalized.startswith("/"):
+        parsed_source = f"http://placeholder{normalized}"
+    parsed = urlparse(parsed_source)
+    if parsed.path and len(parsed.path.strip("/")) >= 3:
+        candidates.add(parsed.path.rstrip("/") or parsed.path)
+    if not normalized.startswith("/") and "/" in normalized and "://" not in normalized:
+        candidates.add(f"/{normalized.lstrip('/')}")
+    return sorted({item for item in candidates if len(item.strip("/")) >= 3}, key=len, reverse=True)
 
 
 def _tool_method(value: Any, fallback: str = "POST") -> str:

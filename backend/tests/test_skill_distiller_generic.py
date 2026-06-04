@@ -302,7 +302,7 @@ def test_normalize_response_preserves_model_tool_suggestions() -> None:
     request = SkillDistillRequest(
         tenant_id="tenant_demo",
         title="商品比价",
-        raw_content="用户提供两个商品名称，调用商品比价接口查询价格并反馈比价结果",
+        raw_content="用户提供两个商品名称，POST /api/mock/product/compare 使用两个商品名返回比价信息。",
         available_tools=[],
     )
     raw = {
@@ -365,6 +365,72 @@ def test_normalize_response_preserves_model_tool_suggestions() -> None:
     assert response.tool_suggestions[0].sample_arguments == {"product_name_1": "A1", "product_name_2": "A3"}
     assert response.tool_suggestions[0].source_excerpt == "POST /api/mock/product/compare 使用两个商品名返回比价信息。"
     assert any("未配置工具 product.compare" in warning for warning in response.warnings)
+
+
+def test_normalize_response_drops_tool_suggestion_when_url_not_in_source() -> None:
+    request = SkillDistillRequest(
+        tenant_id="tenant_demo",
+        title="会员权益补发",
+        raw_content="核对会员权益差异，必要时补发权益并反馈处理结果。",
+        available_tools=[],
+    )
+    raw = {
+        "draft_skill": {
+            "skill_id": "member_benefit",
+            "name": "会员权益补发",
+            "required_info": ["user_id", "order_id"],
+            "steps": [
+                {
+                    "step_id": "issue_benefit",
+                    "name": "补发权益",
+                    "instruction": "补发会员权益。",
+                    "expected_user_info": ["user_id", "order_id"],
+                    "allowed_actions": ["call_tool:member.issue_benefit"],
+                },
+                {
+                    "step_id": "reply_result",
+                    "name": "反馈结果",
+                    "instruction": "反馈处理结果。",
+                    "expected_user_info": [],
+                    "allowed_actions": ["answer_user"],
+                },
+            ],
+            "response_rules": [],
+        },
+        "tool_suggestions": [
+            {
+                "name": "member.issue_benefit",
+                "display_name": "补发会员权益",
+                "description": "补发会员权益。",
+                "method": "POST",
+                "url": "/api/member/issue-benefit",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "user_id": {"type": "string"},
+                        "order_id": {"type": "string"},
+                    },
+                    "required": ["user_id", "order_id"],
+                },
+                "output_schema": {
+                    "type": "object",
+                    "properties": {"success": {"type": "boolean"}},
+                },
+                "sample_arguments": {"user_id": "user_demo", "order_id": "A12345"},
+                "source_excerpt": "补发会员权益。",
+                "reason": "文档描述了补发权益动作。",
+            }
+        ],
+    }
+
+    response = SkillDistiller()._normalize_response(raw, request)  # noqa: SLF001
+
+    assert all(
+        "call_tool:member.issue_benefit" not in step.allowed_actions
+        for step in response.draft_skill.steps
+    )
+    assert response.tool_suggestions == []
+    assert any("未配置工具 member.issue_benefit" in warning for warning in response.warnings)
 
 
 def test_normalize_response_does_not_suggest_tool_from_raw_text_only() -> None:
