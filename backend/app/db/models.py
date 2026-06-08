@@ -72,6 +72,24 @@ class SkillVersion(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class GeneralSkill(SQLModel, table=True):
+    __tablename__ = "general_skills"
+    __table_args__ = (UniqueConstraint("tenant_id", "slug", name="uq_general_skill_tenant_slug"),)
+
+    id: str = Field(default_factory=lambda: new_id("genskill"), primary_key=True)
+    tenant_id: str = Field(index=True)
+    slug: str = Field(index=True)
+    name: str
+    description: Optional[str] = None
+    homepage: Optional[str] = None
+    skill_markdown: str
+    status: str = Field(default="draft", index=True)
+    permissions_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    runtime_config_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class ModelConfig(SQLModel, table=True):
     __tablename__ = "model_configs"
 

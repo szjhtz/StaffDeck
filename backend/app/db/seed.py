@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from sqlmodel import Session, select
 
 from app.config import get_settings
-from app.db.models import ModelConfig, PersonaConfig, Skill, Tenant, Tool, User, utc_now
+from app.db.models import GeneralSkill, ModelConfig, PersonaConfig, Skill, Tenant, Tool, User, utc_now
+from app.general_skills.parser import parse_skill_markdown
 from app.security.encryption import encrypt_secret
 from app.security.auth import hash_password
 
@@ -398,6 +401,8 @@ def seed_demo_data(session: Session) -> None:
         if not tool:
             session.add(Tool(tenant_id="tenant_demo", **tool_config))
 
+    _seed_weather_general_skill(session)
+
     default_model = session.exec(
         select(ModelConfig).where(ModelConfig.tenant_id == "tenant_demo", ModelConfig.is_default == True)  # noqa: E712
     ).first()
@@ -418,6 +423,49 @@ def seed_demo_data(session: Session) -> None:
         )
 
     session.commit()
+
+
+def _seed_weather_general_skill(session: Session) -> None:
+    source = Path("/Users/hm/Downloads/SKILL.md")
+    if not source.exists():
+        return
+    try:
+        parsed = parse_skill_markdown(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    existing = session.exec(
+        select(GeneralSkill).where(
+            GeneralSkill.tenant_id == "tenant_demo",
+            GeneralSkill.slug == parsed.slug,
+        )
+    ).first()
+    if existing:
+        if existing.skill_markdown != parsed.markdown or existing.status != "published":
+            existing.name = parsed.name
+            existing.description = parsed.description
+            existing.homepage = parsed.homepage
+            existing.skill_markdown = parsed.markdown
+            existing.status = "published"
+            existing.permissions_json = existing.permissions_json or {"network": True, "python": True}
+            existing.runtime_config_json = existing.runtime_config_json or {
+                "runtime": "python",
+                "timeout_seconds": 12,
+            }
+            existing.updated_at = utc_now()
+        return
+    session.add(
+        GeneralSkill(
+            tenant_id="tenant_demo",
+            slug=parsed.slug,
+            name=parsed.name,
+            description=parsed.description,
+            homepage=parsed.homepage,
+            skill_markdown=parsed.markdown,
+            status="published",
+            permissions_json={"network": True, "python": True},
+            runtime_config_json={"runtime": "python", "timeout_seconds": 12},
+        )
+    )
 
 
 def _sync_demo_skill_if_stale(existing: Skill, desired: dict) -> None:

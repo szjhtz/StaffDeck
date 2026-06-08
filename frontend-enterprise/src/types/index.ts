@@ -77,6 +77,30 @@ export type SkillVersionRead = SkillRead & {
   created_at: string;
 };
 
+export type GeneralSkillRead = {
+  id: string;
+  tenant_id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  homepage?: string;
+  skill_markdown: string;
+  status: 'draft' | 'published' | 'archived';
+  permissions: Record<string, unknown>;
+  runtime_config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GeneralSkillRunResponse = {
+  skill_slug: string;
+  execution_trace: Array<Record<string, unknown>>;
+  stdout: string;
+  stderr: string;
+  structured_result: Record<string, unknown>;
+  reply: string;
+};
+
 export type ModelConfigRead = {
   id: string;
   tenant_id: string;

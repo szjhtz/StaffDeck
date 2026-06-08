@@ -3,6 +3,7 @@ import {
   DashboardOutlined,
   DatabaseOutlined,
   DislikeOutlined,
+  ExperimentOutlined,
   MessageOutlined,
   ProfileOutlined,
   ToolOutlined,
@@ -14,6 +15,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from
 import DashboardPage from './pages/DashboardPage';
 import DistillPage from './pages/DistillPage';
 import FeedbackPage from './pages/FeedbackPage';
+import GeneralSkillsPage from './pages/GeneralSkillsPage';
 import MemoriesPage from './pages/MemoriesPage';
 import ModelsPage from './pages/ModelsPage';
 import PersonaPage from './pages/PersonaPage';
@@ -64,6 +66,7 @@ function Shell() {
               children: [
                 { key: '/enterprise/skills', icon: <ProfileOutlined />, label: '技能管理' },
                 { key: '/enterprise/skills/distill', icon: <MessageOutlined />, label: '技能改写' },
+                { key: '/enterprise/general-skills', icon: <ExperimentOutlined />, label: '通用技能 Demo' },
                 { key: '/enterprise/tools', icon: <ToolOutlined />, label: '工具配置' },
               ],
             },
@@ -96,6 +99,7 @@ function Shell() {
               <Route path="/enterprise/memories" element={<MemoriesPage />} />
               <Route path="/enterprise/feedback" element={<FeedbackPage />} />
               <Route path="/enterprise/skills" element={<SkillsPage />} />
+              <Route path="/enterprise/general-skills" element={<GeneralSkillsPage />} />
               <Route path="/enterprise/models" element={<ModelsPage />} />
               <Route path="/enterprise/tools" element={<ToolsPage />} />
               <Route path="/enterprise/persona" element={<PersonaPage />} />

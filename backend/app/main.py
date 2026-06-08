@@ -4,7 +4,21 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
-from app.api import auth, chat, feedback, memories, mock, model_configs, persona, sessions, skills, tools, traces, ui_config
+from app.api import (
+    auth,
+    chat,
+    feedback,
+    general_skills,
+    memories,
+    mock,
+    model_configs,
+    persona,
+    sessions,
+    skills,
+    tools,
+    traces,
+    ui_config,
+)
 from app.async_jobs import shutdown_async_jobs
 from app.config import get_settings
 from app.db import engine, init_db
@@ -43,6 +57,7 @@ def health() -> dict[str, str]:
 app.include_router(chat.router)
 app.include_router(ui_config.chat_router)
 app.include_router(auth.router)
+app.include_router(general_skills.router)
 app.include_router(skills.router)
 app.include_router(model_configs.router)
 app.include_router(memories.router)

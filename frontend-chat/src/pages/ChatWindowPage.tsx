@@ -894,7 +894,38 @@ export default function ChatWindowPage() {
                 detail: skill.stepId ? `当前步骤 ${skill.stepId}` : undefined,
                 state: skill.state === 'suspended' ? 'completed' : 'running',
               });
-            });
+          });
+          return;
+        }
+        if (item.event === 'general_skill_state') {
+          const skillName = typeof item.data.skillName === 'string' ? item.data.skillName : '';
+          const skillSlug = typeof item.data.skillSlug === 'string' ? item.data.skillSlug : '';
+          upsertTraceLine(turnId, {
+            id: `general_skill_${skillSlug || skillName || 'selected'}`,
+            kind: 'skill',
+            text: `选择通用技能 ${skillName || skillSlug || ''}`.trim(),
+            detail: skillSlug || undefined,
+            state: 'running',
+          });
+          return;
+        }
+        if (item.event === 'general_skill_trace') {
+          const phase = typeof item.data.phase === 'string' ? item.data.phase : 'trace';
+          const text = typeof item.data.message === 'string' ? item.data.message : '执行通用技能';
+          const detail = typeof item.data.rationale === 'string'
+            ? item.data.rationale
+            : typeof item.data.stdout_preview === 'string'
+              ? item.data.stdout_preview
+              : typeof item.data.stderr_preview === 'string'
+                ? item.data.stderr_preview
+                : undefined;
+          upsertTraceLine(turnId, {
+            id: `general_skill_trace_${phase}`,
+            kind: 'decision',
+            text,
+            detail,
+            state: 'completed',
+          });
           return;
         }
         if (item.event === 'tool_result') {

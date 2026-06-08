@@ -14,7 +14,9 @@ from app.core.response_generator import FALLBACK_REPLY, ResponseGenerator
 from app.core.router import Router
 from app.core.skill_runtime import SkillRuntime
 from app.core.step_agent import StepAgent
-from app.db.models import ChatSession, Message, ModelConfig, PersonaConfig, Skill, Tool, UIConfig, new_id, utc_now
+from app.db.models import ChatSession, GeneralSkill, Message, ModelConfig, PersonaConfig, Skill, Tool, UIConfig, new_id, utc_now
+from app.general_skills import GeneralSkillRunner, GeneralSkillSelector
+from app.general_skills.schema import GeneralSkillRunResponse, GeneralSkillSelection
 from app.llm import LLMError
 from app.memory.jobs import enqueue_memory_capture
 from app.memory.service import MemoryService, memory_read
@@ -85,6 +87,8 @@ class AgentLoop:
         self.step_agent = StepAgent()
         self.reflection_agent = ReflectionAgent()
         self.response_generator = ResponseGenerator()
+        self.general_skill_selector = GeneralSkillSelector()
+        self.general_skill_runner = GeneralSkillRunner()
         self.tool_executor = ToolExecutor(db)
         self.memory = MemoryService(db)
 
@@ -95,6 +99,9 @@ class AgentLoop:
         chat_session: ChatSession | None = None
         memory_model_config: ModelConfig | None = None
         try:
+            general_response = self._try_handle_general_skill_turn(request)
+            if general_response:
+                return general_response
             prepared = self._prepare_turn(request)
             chat_session = prepared.chat_session
             memory_model_config = prepared.model_config
@@ -178,6 +185,54 @@ class AgentLoop:
             session_state=public_session(chat_session),
         )
 
+    def _try_handle_general_skill_turn(self, request: ChatTurnRequest) -> ChatTurnResponse | None:
+        model_config = self._get_default_model(request.tenant_id)
+        if not model_config:
+            return None
+        selected = self._select_general_skill(request.message, model_config)
+        if not selected:
+            return None
+        skill, selection = selected
+        chat_session = self._get_or_create_session(request)
+        self._append_message(request.tenant_id, chat_session.id, "user", request.message)
+        self.events.record(
+            request.tenant_id,
+            chat_session.id,
+            "user_message_received",
+            {"message": request.message, "channel": request.channel, "user_id": request.user_id},
+        )
+        self.events.record(
+            request.tenant_id,
+            chat_session.id,
+            "general_skill_selected",
+            {
+                "skill_slug": skill.slug,
+                "skill_name": skill.name,
+                "confidence": selection.confidence,
+                "reason": selection.reason,
+            },
+        )
+        run_response = self.general_skill_runner.run(skill, request.message, model_config, request.user_id)
+        self._record_general_skill_run_events(request.tenant_id, chat_session, run_response)
+        self._finalize_turn(chat_session, request.tenant_id, run_response.reply)
+        self.db.commit()
+        self.db.refresh(chat_session)
+        self._enqueue_memory_capture(
+            request,
+            chat_session,
+            run_response.reply,
+            StepAgentResult(),
+            None,
+            model_config,
+            self._recent_messages(chat_session),
+        )
+        return ChatTurnResponse(
+            reply=run_response.reply,
+            session_id=chat_session.id,
+            step_result=StepAgentResult(),
+            session_state=public_session(chat_session),
+        )
+
     def handle_turn_stream(self, request: ChatTurnRequest) -> Iterator[dict[str, object]]:
         router_decision: RouterDecision | None = None
         step_result = StepAgentResult()
@@ -203,12 +258,73 @@ class AgentLoop:
             )
 
             model_config = self._get_default_model(request.tenant_id)
-            skills = self._list_published_skills(request.tenant_id)
-            tools = self._list_enabled_tools(request.tenant_id)
-            persona_prompt = self._get_persona_prompt(request.tenant_id)
             if not model_config:
                 raise AgentLoopPreconditionError("missing_model_config", "没有默认模型配置。")
             memory_model_config = model_config
+            selected_general_skill = self._select_general_skill(request.message, model_config)
+            if selected_general_skill:
+                skill, selection = selected_general_skill
+                self.events.record(
+                    request.tenant_id,
+                    chat_session.id,
+                    "general_skill_selected",
+                    {
+                        "skill_slug": skill.slug,
+                        "skill_name": skill.name,
+                        "confidence": selection.confidence,
+                        "reason": selection.reason,
+                    },
+                )
+                yield self._stream_status(
+                    chat_session,
+                    "general_skill_routing",
+                    "正在选择通用技能",
+                    {"skill_slug": skill.slug, "skill_name": skill.name},
+                )
+                yield self._stream_event(
+                    "general_skill_state",
+                    chat_session,
+                    {"skillSlug": skill.slug, "skillName": skill.name, "state": "selected"},
+                )
+                yield self._stream_status(
+                    chat_session,
+                    "general_skill_running",
+                    "正在运行通用技能",
+                    {"skill_slug": skill.slug, "skill_name": skill.name},
+                )
+                run_response = self.general_skill_runner.run(skill, request.message, model_config, request.user_id)
+                self._record_general_skill_run_events(request.tenant_id, chat_session, run_response)
+                for trace_item in run_response.execution_trace:
+                    yield self._stream_event("general_skill_trace", chat_session, trace_item)
+                yield self._stream_status(chat_session, "responding", "正在生成回复")
+                reply = run_response.reply
+                for chunk in self.response_generator.chunk_text(reply):
+                    yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                    self._pace_stream()
+                yield self._stream_event("stream_end", chat_session, {})
+                self._finalize_turn(chat_session, request.tenant_id, reply)
+                self.db.commit()
+                self.db.refresh(chat_session)
+                self._enqueue_memory_capture(
+                    request,
+                    chat_session,
+                    reply,
+                    StepAgentResult(),
+                    None,
+                    model_config,
+                    self._recent_messages(chat_session),
+                )
+                result = ChatTurnResponse(
+                    reply=reply,
+                    session_id=chat_session.id,
+                    step_result=StepAgentResult(),
+                    session_state=public_session(chat_session),
+                )
+                yield self._stream_event("complete", chat_session, result.model_dump(mode="json"))
+                return
+            skills = self._list_published_skills(request.tenant_id)
+            tools = self._list_enabled_tools(request.tenant_id)
+            persona_prompt = self._get_persona_prompt(request.tenant_id)
             if not skills:
                 raise AgentLoopPreconditionError("missing_published_skill", "没有已发布技能。")
             self._finish_stale_completed_skill(request.tenant_id, chat_session, skills)
@@ -1991,6 +2107,35 @@ class AgentLoop:
             ).all()
         )
 
+    def _list_published_general_skills(self, tenant_id: str) -> list[GeneralSkill]:
+        return list(
+            self.db.exec(
+                select(GeneralSkill).where(
+                    GeneralSkill.tenant_id == tenant_id,
+                    GeneralSkill.status == "published",
+                )
+            ).all()
+        )
+
+    def _select_general_skill(
+        self,
+        message: str,
+        model_config: ModelConfig,
+    ) -> tuple[GeneralSkill, GeneralSkillSelection] | None:
+        general_skills = self._list_published_general_skills(model_config.tenant_id)
+        if not general_skills:
+            return None
+        try:
+            selection = self.general_skill_selector.decide(message, general_skills, model_config)
+        except LLMError:
+            return None
+        if not selection.use_general_skill or not selection.selected_slug:
+            return None
+        skill = next((item for item in general_skills if item.slug == selection.selected_slug), None)
+        if not skill:
+            return None
+        return skill, selection
+
     def _list_enabled_tools(self, tenant_id: str) -> list[Tool]:
         return list(
             self.db.exec(
@@ -2173,6 +2318,35 @@ class AgentLoop:
         if tool_call_id:
             payload["toolCallId"] = tool_call_id
         return payload
+
+    def _record_general_skill_run_events(
+        self,
+        tenant_id: str,
+        chat_session: ChatSession,
+        run_response: GeneralSkillRunResponse,
+    ) -> None:
+        for item in run_response.execution_trace:
+            self.events.record(
+                tenant_id,
+                chat_session.id,
+                "general_skill_trace",
+                {
+                    "skill_slug": run_response.skill_slug,
+                    **item,
+                },
+            )
+        self.events.record(
+            tenant_id,
+            chat_session.id,
+            "general_skill_run_finished",
+            {
+                "skill_slug": run_response.skill_slug,
+                "success": bool(run_response.structured_result.get("success", True)),
+                "stdout_preview": run_response.stdout[:600],
+                "stderr_preview": run_response.stderr[:600],
+                "structured_result": run_response.structured_result,
+            },
+        )
 
     def _enqueue_memory_capture(
         self,

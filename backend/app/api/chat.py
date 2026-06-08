@@ -685,6 +685,36 @@ def _event_trace_line(
     event: AgentEvent, skill_names: dict[str, str], skill_hint: str | None = None
 ) -> dict | list[dict] | None:
     payload = event.payload_json or {}
+    if event.event_type == "general_skill_selected":
+        skill_name = str(payload.get("skill_name") or payload.get("skill_slug") or "").strip()
+        reason = str(payload.get("reason") or "").strip()
+        return {
+            "id": f"general_skill_selected_{event.id}",
+            "kind": "skill",
+            "text": f"选择通用技能 {skill_name}" if skill_name else "选择通用技能",
+            "detail": reason or None,
+            "state": "completed",
+        }
+    if event.event_type == "general_skill_trace":
+        message = str(payload.get("message") or "").strip()
+        phase = str(payload.get("phase") or "").strip()
+        detail = str(payload.get("rationale") or payload.get("stdout_preview") or payload.get("stderr_preview") or "").strip()
+        return {
+            "id": f"general_skill_trace_{event.id}",
+            "kind": "decision",
+            "text": message or phase or "执行通用技能",
+            "detail": detail[:300] or None,
+            "state": "completed",
+        }
+    if event.event_type == "general_skill_run_finished":
+        success = bool(payload.get("success"))
+        return {
+            "id": f"general_skill_finished_{event.id}",
+            "kind": "skill",
+            "text": "通用技能运行完成" if success else "通用技能运行失败",
+            "detail": str(payload.get("skill_slug") or "") or None,
+            "state": "completed" if success else "failed",
+        }
     if event.event_type == "router_decision_created":
         intent = str(payload.get("user_intent") or "").strip()
         reason = str(payload.get("reason") or "").strip()
