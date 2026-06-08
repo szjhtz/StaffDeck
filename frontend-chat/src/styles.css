@@ -698,7 +698,8 @@ textarea,
 }
 
 .turn-trace-code-wrap {
-  width: min(760px, 100%);
+  box-sizing: border-box;
+  width: min(620px, 100%);
   margin-top: 8px;
   overflow: hidden;
   border: 1px solid rgba(229, 229, 229, 0.95);
@@ -792,10 +793,11 @@ textarea,
     transparent 66%,
     transparent 100%
   );
-  background-size: 260% 100%;
+  background-repeat: no-repeat;
+  background-size: 58% 100%;
   -webkit-background-clip: text;
   background-clip: text;
-  animation: trace-text-flow 5.2s cubic-bezier(0.33, 0, 0.2, 1) infinite;
+  animation: trace-text-flow 5.5s linear infinite;
   pointer-events: none;
 }
 
@@ -907,10 +909,11 @@ textarea,
     transparent 66%,
     transparent 100%
   );
-  background-size: 260% 100%;
+  background-repeat: no-repeat;
+  background-size: 58% 100%;
   -webkit-background-clip: text;
   background-clip: text;
-  animation: trace-text-flow 5.2s cubic-bezier(0.33, 0, 0.2, 1) infinite;
+  animation: trace-text-flow 5.5s linear infinite;
   pointer-events: none;
 }
 
@@ -922,13 +925,13 @@ textarea,
 
 @keyframes trace-text-flow {
   0% {
-    background-position: 160% 0;
+    background-position: -95% 0;
   }
-  36% {
-    background-position: -160% 0;
+  34% {
+    background-position: 195% 0;
   }
   100% {
-    background-position: -160% 0;
+    background-position: 195% 0;
   }
 }
 
