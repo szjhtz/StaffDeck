@@ -316,7 +316,8 @@ textarea,
   gap: 7px;
   color: var(--foreground);
   font-size: 13px;
-  font-weight: 740;
+  font-weight: 560;
+  letter-spacing: 0;
 }
 
 .chat-layout.sidebar-collapsed .session-title {
