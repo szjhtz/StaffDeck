@@ -247,22 +247,36 @@ class AgentLoop:
         )
         run_response = self.general_skill_runner.run(skill, request.message, model_config, request.user_id)
         self._record_general_skill_run_events(request.tenant_id, chat_session, run_response)
-        self._finalize_turn(chat_session, request.tenant_id, run_response.reply)
+        step_result, tool_result = self._general_skill_agent_outputs(run_response)
+        reply = self._generate_reply_segment(
+            request.message,
+            chat_session,
+            self._get_active_skill(request.tenant_id, chat_session.active_skill_id),
+            RouterDecision(decision="answer_only", user_intent="通用技能执行结果回复"),
+            step_result,
+            tool_result,
+            model_config,
+            self._get_persona_prompt(request.tenant_id),
+            [],
+            self._conversation_context(chat_session),
+        )
+        self._finalize_turn(chat_session, request.tenant_id, reply)
         self.db.commit()
         self.db.refresh(chat_session)
         self._enqueue_memory_capture(
             request,
             chat_session,
-            run_response.reply,
-            StepAgentResult(),
-            None,
+            reply,
+            step_result,
+            tool_result,
             model_config,
             self._recent_messages(chat_session),
         )
         return ChatTurnResponse(
-            reply=run_response.reply,
+            reply=reply,
             session_id=chat_session.id,
-            step_result=StepAgentResult(),
+            step_result=step_result,
+            tool_result=tool_result,
             session_state=public_session(chat_session),
         )
 
@@ -272,6 +286,8 @@ class AgentLoop:
         chat_session: ChatSession,
         model_config: ModelConfig,
         router_decision: RouterDecision,
+        memory_context: list[dict[str, object]] | None = None,
+        conversation_context: dict[str, object] | None = None,
     ) -> ChatTurnResponse | None:
         if not self._scene_router_deferred_to_general(router_decision):
             return None
@@ -293,25 +309,64 @@ class AgentLoop:
         )
         run_response = self.general_skill_runner.run(skill, request.message, model_config, request.user_id)
         self._record_general_skill_run_events(request.tenant_id, chat_session, run_response)
-        self._finalize_turn(chat_session, request.tenant_id, run_response.reply)
+        step_result, tool_result = self._general_skill_agent_outputs(run_response)
+        active_skill = self._get_active_skill(request.tenant_id, chat_session.active_skill_id)
+        reply = self._generate_reply_segment(
+            request.message,
+            chat_session,
+            active_skill,
+            router_decision,
+            step_result,
+            tool_result,
+            model_config,
+            self._get_persona_prompt(request.tenant_id),
+            memory_context or [],
+            conversation_context or self._conversation_context(chat_session),
+        )
+        self._finalize_turn(chat_session, request.tenant_id, reply)
         self.db.commit()
         self.db.refresh(chat_session)
         self._enqueue_memory_capture(
             request,
             chat_session,
-            run_response.reply,
-            StepAgentResult(),
-            None,
+            reply,
+            step_result,
+            tool_result,
             model_config,
             self._recent_messages(chat_session),
         )
         return ChatTurnResponse(
-            reply=run_response.reply,
+            reply=reply,
             session_id=chat_session.id,
             router_decision=router_decision,
-            step_result=StepAgentResult(),
+            step_result=step_result,
+            tool_result=tool_result,
             session_state=public_session(chat_session),
         )
+
+    def _general_skill_agent_outputs(
+        self, run_response: GeneralSkillRunResponse
+    ) -> tuple[StepAgentResult, ToolResult]:
+        success = bool(run_response.structured_result.get("success", True)) and not run_response.stderr.strip()
+        data = {
+            "skill_slug": run_response.skill_slug,
+            "reply": run_response.reply,
+            "structured_result": run_response.structured_result,
+            "stdout": run_response.stdout,
+            "stderr": run_response.stderr,
+        }
+        tool_result = ToolResult(
+            tool_name=f"{GENERAL_SKILL_TOOL_PREFIX}{run_response.skill_slug}",
+            success=success,
+            data=data if success else None,
+            error=None if success else ToolError(code="GENERAL_SKILL_FAILED", message=run_response.stderr or run_response.reply),
+        )
+        step_result = StepAgentResult(
+            reply=run_response.reply,
+            is_step_completed=success,
+            tool_call=None,
+        )
+        return step_result, tool_result
 
     def _scene_router_deferred_to_general(self, router_decision: RouterDecision) -> bool:
         if router_decision.selected_task_id:
@@ -348,6 +403,9 @@ class AgentLoop:
         model_config: ModelConfig,
         selected_general_skill: tuple[GeneralSkill, GeneralSkillSelection],
         router_decision: RouterDecision | None = None,
+        memory_context: list[dict[str, object]] | None = None,
+        conversation_context: dict[str, object] | None = None,
+        persona_prompt: str | None = None,
     ) -> Iterator[dict[str, object]]:
         skill, selection = selected_general_skill
         self.events.record(
@@ -434,10 +492,29 @@ class AgentLoop:
             raise LLMError("General skill stream ended without a result")
         self._record_general_skill_run_events(request.tenant_id, chat_session, run_response)
         yield self._stream_status(chat_session, "responding", "正在生成回复")
-        reply = run_response.reply
-        for chunk in self.response_generator.chunk_text(reply):
+        step_result, tool_result = self._general_skill_agent_outputs(run_response)
+        active_skill = self._get_active_skill(request.tenant_id, chat_session.active_skill_id)
+        reply = ""
+        for chunk in self._generate_reply_stream_segment(
+            request.message,
+            chat_session,
+            active_skill,
+            router_decision or RouterDecision(decision="answer_only", user_intent="通用技能执行结果回复"),
+            step_result,
+            tool_result,
+            model_config,
+            persona_prompt if persona_prompt is not None else self._get_persona_prompt(request.tenant_id),
+            memory_context or [],
+            conversation_context or self._conversation_context(chat_session),
+        ):
+            reply += chunk
             yield self._stream_event("stream_delta", chat_session, {"content": chunk})
             self._pace_stream()
+        if not reply.strip():
+            reply = run_response.reply
+            for chunk in self.response_generator.chunk_text(reply):
+                yield self._stream_event("stream_delta", chat_session, {"content": chunk})
+                self._pace_stream()
         yield self._stream_event("stream_end", chat_session, {})
         self._finalize_turn(chat_session, request.tenant_id, reply)
         self.db.commit()
@@ -446,8 +523,8 @@ class AgentLoop:
             request,
             chat_session,
             reply,
-            StepAgentResult(),
-            None,
+            step_result,
+            tool_result,
             model_config,
             self._recent_messages(chat_session),
         )
@@ -455,7 +532,8 @@ class AgentLoop:
             reply=reply,
             session_id=chat_session.id,
             router_decision=router_decision,
-            step_result=StepAgentResult(),
+            step_result=step_result,
+            tool_result=tool_result,
             session_state=public_session(chat_session),
         )
         yield self._stream_event("complete", chat_session, result.model_dump(mode="json"))
@@ -699,7 +777,14 @@ class AgentLoop:
                 selected_general_skill = self._select_general_skill(request.message, model_config)
                 if selected_general_skill:
                     yield from self._stream_general_skill_response(
-                        request, chat_session, model_config, selected_general_skill
+                        request,
+                        chat_session,
+                        model_config,
+                        selected_general_skill,
+                        None,
+                        [],
+                        self._conversation_context(chat_session),
+                        persona_prompt,
                     )
                     return
                 router_decision = RouterDecision(
@@ -772,7 +857,14 @@ class AgentLoop:
                 selected_general_skill = self._select_general_skill(request.message, model_config)
                 if selected_general_skill:
                     yield from self._stream_general_skill_response(
-                        request, chat_session, model_config, selected_general_skill, router_decision
+                        request,
+                        chat_session,
+                        model_config,
+                        selected_general_skill,
+                        router_decision,
+                        memory_context,
+                        conversation_context,
+                        persona_prompt,
                     )
                     return
 
@@ -1080,7 +1172,12 @@ class AgentLoop:
                 reason="No published scene skills are available; try general skills, then answer as chat.",
             )
             general_response = self._try_handle_general_skill_after_scene_router(
-                request, chat_session, model_config, router_decision
+                request,
+                chat_session,
+                model_config,
+                router_decision,
+                [],
+                self._conversation_context(chat_session),
             )
             if general_response:
                 return PreparedTurn(
@@ -1140,7 +1237,12 @@ class AgentLoop:
             router_decision.model_dump(),
         )
         general_response = self._try_handle_general_skill_after_scene_router(
-            request, chat_session, model_config, router_decision
+            request,
+            chat_session,
+            model_config,
+            router_decision,
+            memory_context,
+            conversation_context,
         )
         if general_response:
             return PreparedTurn(
