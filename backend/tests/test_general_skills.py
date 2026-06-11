@@ -1,3 +1,4 @@
+from fastapi import HTTPException
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -54,6 +55,42 @@ def test_import_general_skill_uses_user_supplied_metadata() -> None:
         assert rows[0].description == "用户改写描述"
         assert rows[0].homepage == "https://example.com/weather-cn"
         assert rows[0].skill_markdown.startswith("# 天气 demo")
+
+
+def test_import_general_skill_without_original_slug_does_not_overwrite_existing() -> None:
+    with _test_session() as db:
+        _seed_minimal_tenant(db)
+
+        first = import_general_skill(
+            GeneralSkillImportRequest(
+                tenant_id="tenant_demo",
+                name="已有天气技能",
+                slug="weather-zh",
+                markdown=WEATHER_SKILL_MD,
+            ),
+            db,
+        )
+
+        try:
+            import_general_skill(
+                GeneralSkillImportRequest(
+                    tenant_id="tenant_demo",
+                    name="新导入天气技能",
+                    slug="weather-zh",
+                    markdown="# 新内容",
+                ),
+                db,
+            )
+        except HTTPException as error:
+            assert error.status_code == 409
+        else:
+            raise AssertionError("expected slug conflict")
+
+        rows = list_general_skills("tenant_demo", db)
+        assert len(rows) == 1
+        assert rows[0].id == first.id
+        assert rows[0].name == "已有天气技能"
+        assert rows[0].skill_markdown == WEATHER_SKILL_MD.strip()
 
 
 def test_import_general_skill_folder_reads_skill_md_metadata() -> None:

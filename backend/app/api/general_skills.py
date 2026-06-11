@@ -54,13 +54,26 @@ def import_general_skill(
     description = _optional_text(request.description) or _metadata_text(metadata, "description", "summary")
     homepage = _optional_text(request.homepage) or _metadata_text(metadata, "homepage", "url", "source")
     _validate_slug(slug)
-    lookup_slug = _optional_text(request.original_slug) or slug
-    row = db.exec(
-        select(GeneralSkill).where(
-            GeneralSkill.tenant_id == request.tenant_id,
-            GeneralSkill.slug == lookup_slug,
-        )
-    ).first()
+    lookup_slug = _optional_text(request.original_slug)
+    row = None
+    if lookup_slug:
+        row = db.exec(
+            select(GeneralSkill).where(
+                GeneralSkill.tenant_id == request.tenant_id,
+                GeneralSkill.slug == lookup_slug,
+            )
+        ).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="General skill to update was not found")
+    else:
+        conflict = db.exec(
+            select(GeneralSkill).where(
+                GeneralSkill.tenant_id == request.tenant_id,
+                GeneralSkill.slug == slug,
+            )
+        ).first()
+        if conflict:
+            raise HTTPException(status_code=409, detail="General skill slug already exists")
     now = utc_now()
     if row:
         if slug != row.slug:

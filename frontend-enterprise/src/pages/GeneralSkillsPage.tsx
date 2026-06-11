@@ -8,7 +8,7 @@ import {
   UploadOutlined,
   DownOutlined,
 } from '@ant-design/icons';
-import { Button, Card, Dropdown, Empty, Input, Select, Space, Tag, Typography, message } from 'antd';
+import { Button, Card, Dropdown, Empty, Input, Modal, Select, Space, Tag, Typography, message } from 'antd';
 import type { ChangeEvent, DragEvent } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, streamPost, TENANT_ID } from '../api/client';
@@ -238,6 +238,18 @@ function applyMetadata(
   if (metadata.homepage || metadata.url) setters.setSkillHomepage(metadata.homepage || metadata.url);
 }
 
+function normalizedSkillFiles(files: GeneralSkillFile[] = []): string {
+  return JSON.stringify(
+    [...files]
+      .map((file) => ({
+        path: file.path,
+        content: file.content,
+        mime_type: file.mime_type || '',
+      }))
+      .sort((a, b) => a.path.localeCompare(b.path)),
+  );
+}
+
 export default function GeneralSkillsPage({ embedded = false }: { embedded?: boolean }) {
   const [rows, setRows] = useState<GeneralSkillRead[]>([]);
   const [markdown, setMarkdown] = useState(DEFAULT_MARKDOWN);
@@ -292,10 +304,26 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
     folderInputRef.current?.setAttribute('directory', '');
   }, []);
 
-  async function importSkill() {
+  function hasUnsavedEditingChanges(): boolean {
+    if (!editingSlug) return false;
+    const original = rows.find((row) => row.slug === editingSlug);
+    if (!original) return false;
+    return (
+      markdown !== original.skill_markdown
+      || skillName !== original.name
+      || skillSlug !== original.slug
+      || skillDescription !== (original.description || '')
+      || skillHomepage !== (original.homepage || '')
+      || normalizedSkillFiles(skillFiles) !== normalizedSkillFiles(
+        original.skill_files?.length ? original.skill_files : [{ path: 'SKILL.md', content: original.skill_markdown }],
+      )
+    );
+  }
+
+  async function importSkill(): Promise<GeneralSkillRead | null> {
     if (!markdown.trim()) {
       message.warning('请先粘贴或上传 SKILL.md');
-      return;
+      return null;
     }
     setSaving(true);
     try {
@@ -324,8 +352,10 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
         return [row, ...withoutSaved];
       });
       void load();
+      return row;
     } catch (error) {
       message.error(error instanceof Error ? error.message : '保存通用技能失败');
+      return null;
     } finally {
       setSaving(false);
     }
@@ -352,6 +382,45 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
     setSelectedSlug(row.slug);
     setEditingSlug(row.slug);
     setRunResult(null);
+  }
+
+  function startImportedDraft() {
+    setEditingSlug(null);
+    setSelectedSlug(undefined);
+    setRunResult(null);
+    setLiveResult(null);
+  }
+
+  async function withImportPreparation(importAction: () => void | Promise<void>) {
+    if (!hasUnsavedEditingChanges()) {
+      await importAction();
+      return;
+    }
+
+    Modal.confirm({
+      title: '导入新通用技能前是否保存当前技能？',
+      content: '你正在编辑现有通用技能。导入会进入新建状态，不会覆盖当前技能。',
+      okText: '保存并发布',
+      cancelText: '不保存，继续导入',
+      async onOk() {
+        const saved = await importSkill();
+        if (saved) await importAction();
+      },
+      async onCancel() {
+        await importAction();
+      },
+    });
+  }
+
+  function requestImport(kind: 'file' | 'folder') {
+    void withImportPreparation(() => {
+      if (kind === 'folder') {
+        setSkillFiles([]);
+        folderInputRef.current?.click();
+        return;
+      }
+      fileInputRef.current?.click();
+    });
   }
 
   async function runSkill() {
@@ -445,6 +514,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
   async function importSingleFile(target: File) {
     const text = await target.text();
     const nextFile = { path: 'SKILL.md', content: text, size: target.size, mime_type: target.type || 'text/markdown' };
+    startImportedDraft();
     setSkillFiles([nextFile]);
     setMarkdown(text);
     applyMetadata(text, { setSkillName, setSkillSlug, setSkillDescription, setSkillHomepage });
@@ -465,6 +535,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
       }),
     );
     nextFiles.sort((a, b) => a.path.localeCompare(b.path));
+    startImportedDraft();
     setSkillFiles(nextFiles);
     const skillFile = nextFiles.find((item) => item.path.split('/').pop()?.toLowerCase() === 'skill.md');
     if (skillFile) {
@@ -520,11 +591,13 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
     setDragActive(false);
     const dropped = await droppedSkillFiles(event.dataTransfer);
     if (!dropped.length) return;
-    if (dropped.length === 1 && !dropped[0].path.includes('/')) {
-      await importSingleFile(dropped[0].file);
-      return;
-    }
-    await importSkillPackage(dropped);
+    await withImportPreparation(async () => {
+      if (dropped.length === 1 && !dropped[0].path.includes('/')) {
+        await importSingleFile(dropped[0].file);
+        return;
+      }
+      await importSkillPackage(dropped);
+    });
   }
 
   const isLiveRunning = loading && !runResult;
@@ -562,12 +635,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
                       { key: 'folder', label: '选择文件夹' },
                     ],
                     onClick: ({ key }) => {
-                      if (key === 'folder') {
-                        setSkillFiles([]);
-                        folderInputRef.current?.click();
-                        return;
-                      }
-                      fileInputRef.current?.click();
+                      requestImport(key === 'folder' ? 'folder' : 'file');
                     },
                   }}
                 >
