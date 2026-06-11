@@ -3,11 +3,19 @@ from pathlib import Path
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.api.general_skills import import_general_skill, list_general_skills
+from app.api.general_skills import (
+    archive_general_skill,
+    delete_general_skill,
+    get_general_skill,
+    import_general_skill,
+    list_general_skills,
+    publish_general_skill,
+    run_general_skill,
+)
 from app.core import AgentLoop
 from app.db.models import AgentEvent, ChatSession, GeneralSkill, ModelConfig, Skill, Tenant, User
 from app.general_skills.runner import GeneralSkillRunner
-from app.general_skills.schema import GeneralSkillImportRequest
+from app.general_skills.schema import GeneralSkillImportRequest, GeneralSkillRunRequest
 from app.llm import LLMClient, LLMError
 from app.security.auth import hash_password
 from app.security.encryption import encrypt_secret
@@ -131,6 +139,66 @@ def test_import_general_skill_folder_reads_skill_md_metadata() -> None:
         assert row.metadata["name"] == "中国城市天气"
         assert [file.path for file in row.skill_files] == ["SKILL.md", "data/cities.json"]
         assert row.skill_markdown.startswith("---\nname: 中国城市天气")
+
+
+def test_general_skill_archive_publish_and_delete_api(monkeypatch) -> None:
+    def fake_run(self, skill, query, model_config, user_id="enterprise_demo", max_attempts=5, event_sink=None):  # noqa: ANN001
+        return {
+            "skill_slug": skill.slug,
+            "execution_trace": [],
+            "generated_code": "",
+            "stdout": "",
+            "stderr": "",
+            "structured_result": {"success": True},
+            "reply": f"{query} ok",
+        }
+
+    monkeypatch.setattr(GeneralSkillRunner, "run", fake_run)
+
+    with _test_session() as db:
+        _seed_minimal_tenant(db)
+        imported = import_general_skill(
+            GeneralSkillImportRequest(
+                tenant_id="tenant_demo",
+                name="天气",
+                slug="weather-zh",
+                markdown=WEATHER_SKILL_MD,
+            ),
+            db,
+        )
+
+        archived = archive_general_skill(imported.slug, "tenant_demo", db)
+        assert archived.status == "archived"
+        try:
+            run_general_skill(
+                imported.slug,
+                GeneralSkillRunRequest(tenant_id="tenant_demo", user_id="user_demo", query="北京天气"),
+                db,
+            )
+        except HTTPException as error:
+            assert error.status_code == 400
+            assert "not published" in str(error.detail)
+        else:
+            raise AssertionError("archived general skill should not run")
+
+        published = publish_general_skill(imported.slug, "tenant_demo", db)
+        assert published.status == "published"
+        result = run_general_skill(
+            imported.slug,
+            GeneralSkillRunRequest(tenant_id="tenant_demo", user_id="user_demo", query="北京天气"),
+            db,
+        )
+        assert result["reply"] == "北京天气 ok"
+
+        deleted = delete_general_skill(imported.slug, "tenant_demo", db)
+        assert deleted == {"status": "deleted", "slug": "weather-zh"}
+        assert list_general_skills("tenant_demo", db) == []
+        try:
+            get_general_skill(imported.slug, "tenant_demo", db)
+        except HTTPException as error:
+            assert error.status_code == 404
+        else:
+            raise AssertionError("deleted general skill should be gone")
 
 
 def test_chat_turn_uses_general_skill_after_scene_router_skips_unmatched_scene(

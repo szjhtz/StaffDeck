@@ -901,7 +901,7 @@ body.skill-distill-fixed .content {
 .general-skill-list-item {
   width: 100%;
   min-width: 0;
-  padding: 12px;
+  padding: 8px 8px 8px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -910,7 +910,6 @@ body.skill-distill-fixed .content {
   border-radius: 10px;
   background: transparent;
   color: var(--foreground);
-  cursor: pointer;
   text-align: left;
 }
 
@@ -924,6 +923,33 @@ body.skill-distill-fixed .content {
   min-width: 0;
   display: grid;
   gap: 2px;
+}
+
+.general-skill-list-main {
+  min-width: 0;
+  flex: 1;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.general-skill-list-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.general-skill-list-more {
+  width: 28px !important;
+  height: 28px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: var(--muted) !important;
 }
 
 .general-skill-list-item strong,

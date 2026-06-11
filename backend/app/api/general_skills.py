@@ -137,6 +137,48 @@ def get_general_skill(
     return general_skill_read(_get_general_skill(db, tenant_id, slug))
 
 
+@router.post("/{slug}/publish", response_model=GeneralSkillRead)
+def publish_general_skill(
+    slug: str,
+    tenant_id: str = Query(...),
+    db: Session = Depends(get_session),
+) -> GeneralSkillRead:
+    row = _get_general_skill(db, tenant_id, slug)
+    row.status = "published"
+    row.updated_at = utc_now()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return general_skill_read(row)
+
+
+@router.post("/{slug}/archive", response_model=GeneralSkillRead)
+def archive_general_skill(
+    slug: str,
+    tenant_id: str = Query(...),
+    db: Session = Depends(get_session),
+) -> GeneralSkillRead:
+    row = _get_general_skill(db, tenant_id, slug)
+    row.status = "archived"
+    row.updated_at = utc_now()
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return general_skill_read(row)
+
+
+@router.delete("/{slug}")
+def delete_general_skill(
+    slug: str,
+    tenant_id: str = Query(...),
+    db: Session = Depends(get_session),
+) -> dict[str, str]:
+    row = _get_general_skill(db, tenant_id, slug)
+    db.delete(row)
+    db.commit()
+    return {"status": "deleted", "slug": slug}
+
+
 @router.post("/{slug}/run", response_model=GeneralSkillRunResponse)
 def run_general_skill(
     slug: str,

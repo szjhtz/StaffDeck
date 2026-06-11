@@ -4,6 +4,7 @@ import {
   CloseCircleOutlined,
   ExperimentOutlined,
   FileTextOutlined,
+  MoreOutlined,
   PlayCircleOutlined,
   UploadOutlined,
   DownOutlined,
@@ -142,6 +143,18 @@ function resultSucceeded(result: Partial<GeneralSkillRunResponse> | null): boole
   if (!result) return false;
   const success = result.structured_result?.success;
   return success !== false && !result.stderr;
+}
+
+function statusLabel(status: GeneralSkillRead['status']): string {
+  if (status === 'published') return '已发布';
+  if (status === 'archived') return '已下线';
+  return '草稿';
+}
+
+function statusColor(status: GeneralSkillRead['status']): string {
+  if (status === 'published') return 'green';
+  if (status === 'archived') return 'default';
+  return 'gold';
 }
 
 function packagePathFromRaw(value: string): string {
@@ -382,6 +395,60 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
     setSelectedSlug(row.slug);
     setEditingSlug(row.slug);
     setRunResult(null);
+  }
+
+  function replaceRow(row: GeneralSkillRead) {
+    setRows((current) => current.map((item) => (item.id === row.id ? row : item)));
+    if (editingSlug === row.slug) {
+      setSkillName(row.name);
+      setSkillSlug(row.slug);
+      setSkillDescription(row.description || '');
+      setSkillHomepage(row.homepage || '');
+      setMarkdown(row.skill_markdown);
+      setSkillFiles(row.skill_files?.length ? row.skill_files : [{ path: 'SKILL.md', content: row.skill_markdown }]);
+    }
+  }
+
+  async function setSkillPublished(row: GeneralSkillRead, published: boolean) {
+    try {
+      const next = await api.post<GeneralSkillRead>(
+        `/api/enterprise/general-skills/${row.slug}/${published ? 'publish' : 'archive'}?tenant_id=${TENANT_ID}`,
+      );
+      replaceRow(next);
+      message.success(published ? '已发布通用技能' : '已下线通用技能');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : published ? '发布失败' : '下线失败');
+    }
+  }
+
+  function confirmDeleteSkill(row: GeneralSkillRead) {
+    Modal.confirm({
+      title: `删除通用技能：${row.name}`,
+      content: '删除后该技能不会再出现在通用技能选择和对话调用中，此操作不可撤销。',
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      async onOk() {
+        try {
+          await api.delete(`/api/enterprise/general-skills/${row.slug}?tenant_id=${TENANT_ID}`);
+          const nextRows = rows.filter((item) => item.id !== row.id);
+          setRows(nextRows);
+          if (selectedSlug === row.slug || editingSlug === row.slug) {
+            const next = nextRows[0];
+            if (next) {
+              setSelectedSlug(next.slug);
+              editSkill(next);
+            } else {
+              setSelectedSlug(undefined);
+              newSkill();
+            }
+          }
+          message.success('已删除通用技能');
+        } catch (error) {
+          message.error(error instanceof Error ? error.message : '删除失败');
+        }
+      },
+    });
   }
 
   function startImportedDraft() {
@@ -819,21 +886,58 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
               {rows.map((row) => {
                 const active = row.slug === selectedSkill?.slug;
                 return (
-                  <button
-                    type="button"
+                  <div
                     className={`general-skill-list-item ${active ? 'active' : ''}`}
                     key={row.id}
-                    onClick={() => {
-                      setSelectedSlug(row.slug);
-                      editSkill(row);
-                    }}
                   >
-                    <span>
-                      <strong>{row.name}</strong>
-                      <small>{row.slug}</small>
-                    </span>
-                    <Tag color={row.status === 'published' ? 'green' : 'default'}>{row.status}</Tag>
-                  </button>
+                    <button
+                      type="button"
+                      className="general-skill-list-main"
+                      onClick={() => {
+                        setSelectedSlug(row.slug);
+                        editSkill(row);
+                      }}
+                    >
+                      <span>
+                        <strong>{row.name}</strong>
+                        <small>{row.slug}</small>
+                      </span>
+                    </button>
+                    <div className="general-skill-list-actions">
+                      <Tag color={statusColor(row.status)}>{statusLabel(row.status)}</Tag>
+                      <Dropdown
+                        trigger={['click']}
+                        menu={{
+                          items: [
+                            row.status === 'published'
+                              ? { key: 'archive', label: '下线' }
+                              : { key: 'publish', label: '发布' },
+                            { key: 'delete', label: '删除', danger: true },
+                          ],
+                          onClick: ({ key, domEvent }) => {
+                            domEvent.stopPropagation();
+                            if (key === 'publish') {
+                              void setSkillPublished(row, true);
+                              return;
+                            }
+                            if (key === 'archive') {
+                              void setSkillPublished(row, false);
+                              return;
+                            }
+                            confirmDeleteSkill(row);
+                          },
+                        }}
+                      >
+                        <Button
+                          className="general-skill-list-more"
+                          type="text"
+                          size="small"
+                          icon={<MoreOutlined />}
+                          onClick={(event) => event.stopPropagation()}
+                        />
+                      </Dropdown>
+                    </div>
+                  </div>
                 );
               })}
             </div>
