@@ -12,7 +12,7 @@ import {
   ToolOutlined,
   UserOutlined,
 } from '@ant-design/icons';
-import { Button, ConfigProvider, Input, Layout, Menu, Modal, Select, Typography, theme as antdTheme } from 'antd';
+import { Button, ConfigProvider, Input, Layout, Menu, Modal, Radio, Select, Typography, message, theme as antdTheme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import { useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
@@ -33,13 +33,48 @@ import type { AgentProfileRead } from './types';
 const { Header, Sider, Content } = Layout;
 const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
 
+type AgentCreateMode = 'copy' | 'blank' | 'json';
+
+type AgentCreateFormState = {
+  name: string;
+  description: string;
+  sourceMode: AgentCreateMode;
+  copyFromAgentId: string;
+  definitionText: string;
+};
+
+const EMPTY_AGENT_FORM: AgentCreateFormState = {
+  name: '',
+  description: '',
+  sourceMode: 'copy',
+  copyFromAgentId: '',
+  definitionText: '',
+};
+
+const AGENT_DEFINITION_PLACEHOLDER = `{
+  "agent": {
+    "name": "售后专家",
+    "description": "只处理售后、退款和换货问题",
+    "persona_prompt": "你是专业、克制、可验证的售后客服。"
+  },
+  "resources": {
+    "skill_ids": ["after_sales_refund"],
+    "general_skill_slugs": ["weather-zh"],
+    "knowledge_base_ids": ["售后政策库"]
+  },
+  "model_bindings": {
+    "default": "model_xxx",
+    "router": "model_xxx"
+  }
+}`;
+
 function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
   const [agentCreateOpen, setAgentCreateOpen] = useState(false);
-  const [agentForm, setAgentForm] = useState({ name: '', description: '' });
+  const [agentForm, setAgentForm] = useState<AgentCreateFormState>(EMPTY_AGENT_FORM);
   const selected = location.pathname === '/enterprise'
     ? '/enterprise/dashboard'
     : location.pathname.startsWith('/enterprise/knowledge/new')
@@ -85,23 +120,64 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
 
   function openCreateAgentModal() {
     setAgentForm({
-      name: '',
-      description: '',
+      ...EMPTY_AGENT_FORM,
+      copyFromAgentId: selectedAgentId || agents.find((item) => item.is_overall)?.id || '',
     });
     setAgentCreateOpen(true);
   }
 
   async function saveAgentCreateModal() {
-    const name = agentForm.name.trim();
-    if (!name) return;
+    let definition: Record<string, unknown> | undefined;
+    let definitionAgent: Record<string, unknown> | undefined;
+    if (agentForm.sourceMode === 'json') {
+      if (!agentForm.definitionText.trim()) {
+        message.error('请先粘贴智能体 JSON');
+        return;
+      }
+      try {
+        definition = JSON.parse(agentForm.definitionText) as Record<string, unknown>;
+        definitionAgent = (typeof definition.agent === 'object' && definition.agent ? definition.agent : definition) as Record<string, unknown>;
+      } catch {
+        message.error('JSON 格式不正确');
+        return;
+      }
+    }
+    const name = agentForm.name.trim() || (typeof definitionAgent?.name === 'string' ? definitionAgent.name.trim() : '');
+    if (!name) {
+      message.error('请填写智能体名称');
+      return;
+    }
     const created = await api.post<AgentProfileRead>('/api/enterprise/agents', {
       tenant_id: TENANT_ID,
       name,
-      description: agentForm.description,
+      description: agentForm.description || undefined,
+      source_mode: agentForm.sourceMode,
+      copy_from_agent_id: agentForm.sourceMode === 'copy' ? agentForm.copyFromAgentId || undefined : undefined,
+      definition,
     });
     await loadAgents();
     changeAgentScope(created.id);
     setAgentCreateOpen(false);
+  }
+
+  function hydrateAgentDefinition() {
+    if (!agentForm.definitionText.trim()) {
+      message.error('请先粘贴智能体 JSON');
+      return;
+    }
+    try {
+      const definition = JSON.parse(agentForm.definitionText) as Record<string, unknown>;
+      const agent = (typeof definition.agent === 'object' && definition.agent ? definition.agent : definition) as Record<string, unknown>;
+      setAgentForm((prev) => ({
+        ...prev,
+        name: typeof agent.name === 'string' ? agent.name : prev.name,
+        description: typeof agent.description === 'string' ? agent.description : prev.description,
+        copyFromAgentId: typeof agent.copy_from_agent_id === 'string' ? agent.copy_from_agent_id : prev.copyFromAgentId,
+      }));
+      message.success('已读取 JSON 中的基础信息');
+    } catch {
+      message.error('JSON 格式不正确');
+    }
   }
 
   return (
@@ -153,9 +229,15 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
           ]}
         />
         <div className="agent-dock">
-          <div className="agent-dock-mark">
+          <button
+            type="button"
+            className="agent-dock-mark"
+            title="新增智能体"
+            aria-label="新增智能体"
+            onClick={openCreateAgentModal}
+          >
             <RobotOutlined />
-          </div>
+          </button>
           <div className="agent-dock-main">
             <div className="agent-dock-label">智能体</div>
             <Select
@@ -226,6 +308,53 @@ function Shell({ effectiveTheme }: { effectiveTheme: EffectiveTheme }) {
         cancelText="取消"
       >
         <div className="agent-editor-form">
+          <label>
+            创建方式
+            <Radio.Group
+              className="agent-create-mode"
+              value={agentForm.sourceMode}
+              onChange={(event) => setAgentForm((prev) => ({ ...prev, sourceMode: event.target.value }))}
+              optionType="button"
+              buttonStyle="solid"
+              options={[
+                { label: '复制已有智能体', value: 'copy' },
+                { label: '空白智能体', value: 'blank' },
+                { label: 'JSON 装载', value: 'json' },
+              ]}
+            />
+          </label>
+          {agentForm.sourceMode === 'copy' && (
+            <label>
+              复制来源
+              <Select
+                value={agentForm.copyFromAgentId || undefined}
+                placeholder="选择一个已有智能体"
+                options={agents.map((agent) => ({
+                  value: agent.id,
+                  label: agent.is_overall ? `整体 · ${agent.name}` : agent.name,
+                }))}
+                onChange={(value) => setAgentForm((prev) => ({ ...prev, copyFromAgentId: value }))}
+              />
+            </label>
+          )}
+          {agentForm.sourceMode === 'blank' && (
+            <div className="agent-definition-note">空白智能体不会继承技能、知识库、通用技能、人设或模型绑定。</div>
+          )}
+          {agentForm.sourceMode === 'json' && (
+            <label>
+              智能体 JSON
+              <Input.TextArea
+                rows={9}
+                className="agent-definition-input"
+                placeholder={AGENT_DEFINITION_PLACEHOLDER}
+                value={agentForm.definitionText}
+                onChange={(event) => setAgentForm((prev) => ({ ...prev, definitionText: event.target.value }))}
+              />
+              <Button className="agent-definition-read" onClick={hydrateAgentDefinition}>
+                读取 JSON
+              </Button>
+            </label>
+          )}
           <label>
             名称
             <Input value={agentForm.name} onChange={(event) => setAgentForm((prev) => ({ ...prev, name: event.target.value }))} />

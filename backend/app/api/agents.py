@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
@@ -17,6 +19,7 @@ from app.agents.schema import (
 from app.agents.branching import (
     branch_versions,
     copy_overall_scope_to_agent,
+    ensure_agent_skill_branch,
     get_overall_agent,
     promote_branch_to_overall,
     rollback_branch,
@@ -26,9 +29,11 @@ from app.agents.branching import (
 from app.db import get_session
 from app.db.models import (
     AgentModelBinding,
+    AgentKnowledgeBranch,
     AgentProfile,
     AgentResourceBinding,
     AgentSkillBranch,
+    AgentSkillBranchVersion,
     GeneralSkill,
     KnowledgeBase,
     Skill,
@@ -60,7 +65,9 @@ def list_agents(tenant_id: str = Query(...), db: Session = Depends(get_session))
 @enterprise_router.post("", response_model=AgentProfileRead)
 def create_agent(request: AgentProfileCreateRequest, db: Session = Depends(get_session)) -> AgentProfileRead:
     ensure_tenant(db, request.tenant_id)
-    name = request.name.strip()
+    definition = request.definition or {}
+    agent_definition = _agent_definition(definition)
+    name = str(request.name or agent_definition.get("name") or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Agent name cannot be empty")
     existing = db.exec(
@@ -71,19 +78,34 @@ def create_agent(request: AgentProfileCreateRequest, db: Session = Depends(get_s
     row = AgentProfile(
         tenant_id=request.tenant_id,
         name=name,
-        description=request.description,
-        persona_prompt=request.persona_prompt,
+        description=request.description if request.description is not None else _optional_str(agent_definition.get("description")),
+        persona_prompt=request.persona_prompt if request.persona_prompt is not None else _optional_str(agent_definition.get("persona_prompt")),
         is_overall=request.is_overall,
         status="active",
-        metadata_json=request.metadata,
+        metadata_json=_merged_metadata(request.metadata, agent_definition.get("metadata")),
     )
     db.add(row)
     db.flush()
     if not row.is_overall:
-        overall = get_overall_agent(db, request.tenant_id)
-        if overall and not row.persona_prompt:
-            row.persona_prompt = overall.persona_prompt
-        copy_overall_scope_to_agent(db, request.tenant_id, row)
+        copy_from_agent_id = request.copy_from_agent_id or _optional_str(agent_definition.get("copy_from_agent_id"))
+        if request.source_mode == "blank" or agent_definition.get("blank") is True:
+            pass
+        elif copy_from_agent_id:
+            source_agent = _get_agent(db, request.tenant_id, copy_from_agent_id)
+            if not row.persona_prompt:
+                row.persona_prompt = source_agent.persona_prompt
+            _copy_agent_scope_from_source(db, request.tenant_id, source_agent, row)
+        elif request.source_mode == "json":
+            pass
+        else:
+            overall = get_overall_agent(db, request.tenant_id)
+            if overall and not row.persona_prompt:
+                row.persona_prompt = overall.persona_prompt
+            copy_overall_scope_to_agent(db, request.tenant_id, row)
+            if overall:
+                _copy_agent_models_from_source(db, request.tenant_id, overall, row)
+        if request.source_mode == "json" or request.definition:
+            _apply_agent_definition(db, request.tenant_id, row, definition)
     db.commit()
     db.refresh(row)
     return agent_read(row, _bindings_by_agent(db, request.tenant_id).get(row.id, []))
@@ -364,6 +386,307 @@ def binding_read(row: AgentResourceBinding) -> AgentResourceBindingRead:
         created_at=row.created_at.isoformat(),
         updated_at=row.updated_at.isoformat(),
     )
+
+
+def _agent_definition(definition: dict[str, Any]) -> dict[str, Any]:
+    nested = definition.get("agent")
+    if isinstance(nested, dict):
+        return nested
+    return definition if isinstance(definition, dict) else {}
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _merged_metadata(request_metadata: dict[str, Any], definition_metadata: object) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    if isinstance(definition_metadata, dict):
+        merged.update(definition_metadata)
+    merged.update(request_metadata or {})
+    return merged
+
+
+def _copy_agent_scope_from_source(db: Session, tenant_id: str, source: AgentProfile, target: AgentProfile) -> None:
+    if source.is_overall:
+        copy_overall_scope_to_agent(db, tenant_id, target)
+    else:
+        bindings = db.exec(
+            select(AgentResourceBinding).where(
+                AgentResourceBinding.tenant_id == tenant_id,
+                AgentResourceBinding.agent_id == source.id,
+            )
+        ).all()
+        for binding in bindings:
+            _copy_resource_binding(db, tenant_id, source.id, target.id, binding)
+    _copy_agent_models_from_source(db, tenant_id, source, target)
+
+
+def _copy_resource_binding(
+    db: Session,
+    tenant_id: str,
+    source_agent_id: str,
+    target_agent_id: str,
+    binding: AgentResourceBinding,
+) -> None:
+    copied_binding = AgentResourceBinding(
+        tenant_id=tenant_id,
+        agent_id=target_agent_id,
+        resource_type=binding.resource_type,
+        resource_id=binding.resource_id,
+        status=binding.status,
+        metadata_json=dict(binding.metadata_json or {}),
+    )
+    db.add(copied_binding)
+    if binding.resource_type == "skill":
+        skill = db.get(Skill, binding.resource_id)
+        if skill and skill.tenant_id == tenant_id:
+            _copy_skill_branch(db, tenant_id, source_agent_id, target_agent_id, skill)
+    elif binding.resource_type == "knowledge_base":
+        kb = db.get(KnowledgeBase, binding.resource_id)
+        if kb and kb.tenant_id == tenant_id:
+            _copy_knowledge_branch(db, tenant_id, source_agent_id, target_agent_id, kb)
+
+
+def _copy_agent_models_from_source(db: Session, tenant_id: str, source: AgentProfile, target: AgentProfile) -> None:
+    bindings = db.exec(
+        select(AgentModelBinding).where(
+            AgentModelBinding.tenant_id == tenant_id,
+            AgentModelBinding.agent_id == source.id,
+        )
+    ).all()
+    for binding in bindings:
+        db.add(
+            AgentModelBinding(
+                tenant_id=tenant_id,
+                agent_id=target.id,
+                role=binding.role,
+                model_config_id=binding.model_config_id,
+            )
+        )
+
+
+def _copy_skill_branch(db: Session, tenant_id: str, source_agent_id: str, target_agent_id: str, skill: Skill) -> None:
+    source_branch = db.exec(
+        select(AgentSkillBranch).where(
+            AgentSkillBranch.tenant_id == tenant_id,
+            AgentSkillBranch.agent_id == source_agent_id,
+            AgentSkillBranch.skill_id == skill.skill_id,
+        )
+    ).first()
+    if not source_branch:
+        ensure_agent_skill_branch(db, tenant_id, target_agent_id, skill)
+        return
+    target_branch = AgentSkillBranch(
+        tenant_id=tenant_id,
+        agent_id=target_agent_id,
+        skill_id=source_branch.skill_id,
+        source_skill_id=source_branch.source_skill_id,
+        base_version=source_branch.base_version,
+        head_version=source_branch.head_version,
+        content_json=dict(source_branch.content_json or {}),
+        status=source_branch.status,
+        sync_state=source_branch.sync_state,
+        metadata_json=dict(source_branch.metadata_json or {}),
+    )
+    db.add(target_branch)
+    db.flush()
+    db.add(
+        AgentSkillBranchVersion(
+            tenant_id=tenant_id,
+            agent_id=target_agent_id,
+            skill_id=target_branch.skill_id,
+            source_skill_id=target_branch.source_skill_id,
+            version=target_branch.head_version,
+            base_version=target_branch.base_version,
+            content_json=dict(target_branch.content_json or {}),
+            status=target_branch.status,
+            sync_state=target_branch.sync_state,
+            change_summary=f"复制自 {source_agent_id}",
+        )
+    )
+
+
+def _copy_knowledge_branch(db: Session, tenant_id: str, source_agent_id: str, target_agent_id: str, kb: KnowledgeBase) -> None:
+    source_branch = db.exec(
+        select(AgentKnowledgeBranch).where(
+            AgentKnowledgeBranch.tenant_id == tenant_id,
+            AgentKnowledgeBranch.agent_id == source_agent_id,
+            AgentKnowledgeBranch.knowledge_base_id == kb.id,
+        )
+    ).first()
+    if not source_branch:
+        return
+    db.add(
+        AgentKnowledgeBranch(
+            tenant_id=tenant_id,
+            agent_id=target_agent_id,
+            knowledge_base_id=source_branch.knowledge_base_id,
+            base_version=source_branch.base_version,
+            head_version=source_branch.head_version,
+            status=source_branch.status,
+            sync_state=source_branch.sync_state,
+            metadata_json=dict(source_branch.metadata_json or {}),
+        )
+    )
+
+
+def _apply_agent_definition(db: Session, tenant_id: str, agent: AgentProfile, definition: dict[str, Any]) -> None:
+    if not definition:
+        return
+    if isinstance(definition.get("resources"), (dict, list)) or any(
+        key in definition for key in ("skills", "skill_ids", "general_skills", "general_skill_slugs", "knowledge_bases", "knowledge_base_ids")
+    ):
+        _replace_agent_resources_from_definition(db, tenant_id, agent, definition)
+    model_bindings = definition.get("model_bindings") or definition.get("models")
+    if isinstance(model_bindings, dict):
+        _replace_model_bindings_from_definition(db, tenant_id, agent, model_bindings)
+
+
+def _replace_agent_resources_from_definition(db: Session, tenant_id: str, agent: AgentProfile, definition: dict[str, Any]) -> None:
+    existing = db.exec(
+        select(AgentResourceBinding).where(
+            AgentResourceBinding.tenant_id == tenant_id,
+            AgentResourceBinding.agent_id == agent.id,
+        )
+    ).all()
+    for row in existing:
+        db.delete(row)
+    resources = definition.get("resources")
+    resource_items = []
+    if isinstance(resources, dict):
+        resource_items.extend(("skill", item) for item in resources.get("skills", []) or resources.get("skill_ids", []) or [])
+        resource_items.extend(("general_skill", item) for item in resources.get("general_skills", []) or resources.get("general_skill_slugs", []) or [])
+        resource_items.extend(("knowledge_base", item) for item in resources.get("knowledge_bases", []) or resources.get("knowledge_base_ids", []) or [])
+    elif isinstance(resources, list):
+        for item in resources:
+            resource_type = _definition_resource_type(item)
+            if resource_type:
+                resource_items.append((resource_type, item))
+    resource_items.extend(("skill", item) for item in definition.get("skills", []) or definition.get("skill_ids", []) or [])
+    resource_items.extend(("general_skill", item) for item in definition.get("general_skills", []) or definition.get("general_skill_slugs", []) or [])
+    resource_items.extend(("knowledge_base", item) for item in definition.get("knowledge_bases", []) or definition.get("knowledge_base_ids", []) or [])
+    for resource_type, raw_item in resource_items:
+        _create_resource_from_definition_item(db, tenant_id, agent, resource_type, raw_item)
+
+
+def _definition_resource_type(raw_item: object) -> str | None:
+    if not isinstance(raw_item, dict):
+        return None
+    raw_type = str(raw_item.get("resource_type") or raw_item.get("type") or "").strip()
+    normalized = {
+        "skill": "skill",
+        "scenario_skill": "skill",
+        "scene_skill": "skill",
+        "general_skill": "general_skill",
+        "common_skill": "general_skill",
+        "knowledge_base": "knowledge_base",
+        "knowledge": "knowledge_base",
+    }.get(raw_type)
+    return normalized
+
+
+def _create_resource_from_definition_item(
+    db: Session,
+    tenant_id: str,
+    agent: AgentProfile,
+    resource_type: str,
+    raw_item: object,
+) -> None:
+    if isinstance(raw_item, dict):
+        identifier = raw_item.get("resource_id") or raw_item.get("id") or raw_item.get("skill_id") or raw_item.get("slug") or raw_item.get("name")
+        status = str(raw_item.get("status") or "active")
+        metadata = raw_item.get("metadata") if isinstance(raw_item.get("metadata"), dict) else {}
+    else:
+        identifier = raw_item
+        status = "active"
+        metadata = {}
+    if not identifier:
+        return
+    resolved = _resolve_resource(db, tenant_id, resource_type, str(identifier))
+    if not resolved:
+        raise HTTPException(status_code=404, detail=f"Resource not found: {resource_type}:{identifier}")
+    db.add(
+        AgentResourceBinding(
+            tenant_id=tenant_id,
+            agent_id=agent.id,
+            resource_type=resource_type,
+            resource_id=resolved.id,
+            status=status,
+            metadata_json=dict(metadata),
+        )
+    )
+    if resource_type == "skill":
+        ensure_agent_skill_branch(db, tenant_id, agent.id, resolved)
+    elif resource_type == "knowledge_base":
+        existing_branch = db.exec(
+            select(AgentKnowledgeBranch).where(
+                AgentKnowledgeBranch.tenant_id == tenant_id,
+                AgentKnowledgeBranch.agent_id == agent.id,
+                AgentKnowledgeBranch.knowledge_base_id == resolved.id,
+            )
+        )
+        branch = existing_branch.first()
+        if branch:
+            branch.status = status
+            branch.updated_at = utc_now()
+            db.add(branch)
+        else:
+            db.add(
+                AgentKnowledgeBranch(
+                    tenant_id=tenant_id,
+                    agent_id=agent.id,
+                    knowledge_base_id=resolved.id,
+                    base_version="1.0.0",
+                    head_version="1.0.0",
+                    status=status,
+                    sync_state="synced",
+                )
+            )
+
+
+def _replace_model_bindings_from_definition(
+    db: Session,
+    tenant_id: str,
+    agent: AgentProfile,
+    model_bindings: dict[str, Any],
+) -> None:
+    existing = db.exec(
+        select(AgentModelBinding).where(
+            AgentModelBinding.tenant_id == tenant_id,
+            AgentModelBinding.agent_id == agent.id,
+        )
+    ).all()
+    for row in existing:
+        db.delete(row)
+    for role, model_config_id in model_bindings.items():
+        if not model_config_id:
+            continue
+        db.add(
+            AgentModelBinding(
+                tenant_id=tenant_id,
+                agent_id=agent.id,
+                role=str(role),
+                model_config_id=str(model_config_id),
+            )
+        )
+
+
+def _resolve_resource(db: Session, tenant_id: str, resource_type: str, identifier: str) -> Skill | GeneralSkill | KnowledgeBase | None:
+    if resource_type == "skill":
+        return db.get(Skill, identifier) or db.exec(select(Skill).where(Skill.tenant_id == tenant_id, Skill.skill_id == identifier)).first()
+    if resource_type == "general_skill":
+        return db.get(GeneralSkill, identifier) or db.exec(
+            select(GeneralSkill).where(GeneralSkill.tenant_id == tenant_id, GeneralSkill.slug == identifier)
+        ).first()
+    if resource_type == "knowledge_base":
+        return db.get(KnowledgeBase, identifier) or db.exec(
+            select(KnowledgeBase).where(KnowledgeBase.tenant_id == tenant_id, KnowledgeBase.name == identifier)
+        ).first()
+    return None
 
 
 def _get_agent(db: Session, tenant_id: str, agent_id: str) -> AgentProfile:
