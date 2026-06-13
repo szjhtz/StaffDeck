@@ -11,6 +11,7 @@ export default function FeedbackPage() {
   const [detail, setDetail] = useState<FeedbackSessionDetailRead | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [reanalyzingId, setReanalyzingId] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -41,6 +42,33 @@ export default function FeedbackPage() {
       message.error(error instanceof Error ? error.message : '加载详情失败');
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const reloadCurrentDetail = async () => {
+    const sessionId = String(detail?.session?.id || detail?.session?.session_id || '');
+    if (!sessionId) return;
+    try {
+      const result = await api.get<FeedbackSessionDetailRead>(
+        `/api/enterprise/feedback/sessions/${sessionId}?tenant_id=${TENANT_ID}`,
+      );
+      setDetail(result);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '刷新详情失败');
+    }
+  };
+
+  const reanalyzeFeedback = async (feedbackId: string) => {
+    setReanalyzingId(feedbackId);
+    try {
+      await api.post(`/api/enterprise/feedback/${feedbackId}/reanalyze?tenant_id=${TENANT_ID}`);
+      message.success('已重新提交后台分析');
+      await reloadCurrentDetail();
+      await load();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '重新分析失败');
+    } finally {
+      setReanalyzingId(null);
     }
   };
 
@@ -160,7 +188,12 @@ export default function FeedbackPage() {
             </Descriptions>
             <div className="feedback-conversation">
               {detail.messages.map((item) => (
-                <FeedbackMessage key={item.id} item={item} />
+                <FeedbackMessage
+                  key={item.id}
+                  item={item}
+                  onReanalyze={reanalyzeFeedback}
+                  reanalyzing={Boolean(item.feedback_id && item.feedback_id === reanalyzingId)}
+                />
               ))}
             </div>
           </div>
@@ -170,9 +203,18 @@ export default function FeedbackPage() {
   );
 }
 
-function FeedbackMessage({ item }: { item: FeedbackMessageRead }) {
+function FeedbackMessage({
+  item,
+  onReanalyze,
+  reanalyzing,
+}: {
+  item: FeedbackMessageRead;
+  onReanalyze: (feedbackId: string) => void;
+  reanalyzing: boolean;
+}) {
   const isUser = item.role === 'user';
   const isAssistant = item.role === 'assistant';
+  const analysisFailed = item.feedback_analysis?.status === 'failed';
   return (
     <div className={`feedback-message-row ${isUser ? 'user' : 'assistant'}`}>
       <div className="feedback-message-bubble">
@@ -181,7 +223,11 @@ function FeedbackMessage({ item }: { item: FeedbackMessageRead }) {
           <span>{new Date(item.created_at).toLocaleString()}</span>
           {item.feedback_rating === 'down' && <Tag color="red">点踩</Tag>}
           {item.feedback_rating === 'up' && <Tag color="green">点赞</Tag>}
-          {item.feedback_analysis && <FeedbackBucketTag label={item.feedback_analysis.bucket_label} bucket={item.feedback_analysis.bucket} />}
+          {item.feedback_analysis && (
+            analysisFailed
+              ? <Tag color="red">分析失败</Tag>
+              : <FeedbackBucketTag label={item.feedback_analysis.bucket_label} bucket={item.feedback_analysis.bucket} />
+          )}
         </div>
         <Typography.Paragraph className="feedback-message-content">
           {item.content}
@@ -190,12 +236,22 @@ function FeedbackMessage({ item }: { item: FeedbackMessageRead }) {
           <div className="feedback-analysis-box">
             <div>
               <strong>分析状态：</strong>{analysisStatusLabel(item.feedback_analysis.status)}
-              {typeof item.feedback_analysis.confidence === 'number' && (
+              {item.feedback_analysis.status !== 'failed' && typeof item.feedback_analysis.confidence === 'number' && (
                 <span> · 置信度 {(item.feedback_analysis.confidence * 100).toFixed(0)}%</span>
               )}
             </div>
             {item.feedback_analysis.summary && <div><strong>总结：</strong>{item.feedback_analysis.summary}</div>}
             {item.feedback_analysis.reason && <div><strong>原因：</strong>{item.feedback_analysis.reason}</div>}
+            {item.feedback_analysis.status === 'failed' && item.feedback_id && (
+              <Button
+                size="small"
+                icon={<ReloadOutlined />}
+                loading={reanalyzing}
+                onClick={() => onReanalyze(item.feedback_id as string)}
+              >
+                重新分析
+              </Button>
+            )}
           </div>
         )}
       </div>
@@ -225,6 +281,7 @@ function bucketColor(bucket?: string): string {
 function analysisStatusLabel(status?: string): string {
   if (status === 'pending') return '等待分析';
   if (status === 'analyzed') return '已分析';
+  if (status === 'failed') return '分析失败';
   if (status === 'needs_model') return '待配置模型';
   return status || '未知';
 }

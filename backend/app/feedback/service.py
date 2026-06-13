@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections import Counter
 from typing import Any
 
@@ -20,6 +21,8 @@ FEEDBACK_BUCKET_LABELS: dict[str, str] = {
 }
 
 ALLOWED_BUCKETS = set(FEEDBACK_BUCKET_LABELS)
+FEEDBACK_ANALYSIS_MAX_ATTEMPTS = 3
+FEEDBACK_ANALYSIS_RETRY_DELAY_SECONDS = 0.6
 
 FEEDBACK_ANALYSIS_PROMPT = """
 你是客服 Agent 质量分析器。请根据用户反馈、消息上下文和执行轨迹，判断反馈原因。
@@ -59,20 +62,24 @@ class FeedbackAnalysisService:
             return self._mark_needs_model(feedback)
 
         payload = self._analysis_payload(feedback)
-        try:
-            raw = LLMClient(model_config).generate_json(FEEDBACK_ANALYSIS_PROMPT, payload)
-            analysis = _normalize_analysis(raw, feedback.rating)
-        except LLMError as exc:
-            analysis = {
-                "bucket": "unknown",
-                "confidence": 0.0,
-                "reason": f"模型分析失败：{str(exc)[:60]}",
-                "summary": "反馈已记录，但后台分析失败。",
-                "evidence": [],
-                "suggested_action": "稍后重新分析。",
-            }
+        last_error: LLMError | None = None
+        for attempt in range(1, FEEDBACK_ANALYSIS_MAX_ATTEMPTS + 1):
+            try:
+                raw = LLMClient(model_config).generate_json(FEEDBACK_ANALYSIS_PROMPT, payload)
+                analysis = _normalize_analysis(raw, feedback.rating)
+                self._apply_analysis(feedback, analysis, "analyzed")
+                self.db.add(feedback)
+                self.db.commit()
+                self.db.refresh(feedback)
+                return feedback
+            except LLMError as exc:
+                last_error = exc
+                if attempt < FEEDBACK_ANALYSIS_MAX_ATTEMPTS:
+                    time.sleep(FEEDBACK_ANALYSIS_RETRY_DELAY_SECONDS * attempt)
 
-        self._apply_analysis(feedback, analysis, "analyzed")
+        if last_error is None:
+            last_error = LLMError("Unknown model analysis failure")
+        self._mark_failed(feedback, last_error, FEEDBACK_ANALYSIS_MAX_ATTEMPTS)
         self.db.add(feedback)
         self.db.commit()
         self.db.refresh(feedback)
@@ -102,12 +109,31 @@ class FeedbackAnalysisService:
         self.db.refresh(feedback)
         return feedback
 
+    def _mark_failed(self, feedback: MessageFeedback, exc: LLMError, attempts: int) -> None:
+        error_message = str(exc)[:300]
+        self._apply_analysis(
+            feedback,
+            {
+                "bucket": "unknown",
+                "confidence": None,
+                "reason": f"模型分析失败：{error_message}",
+                "summary": "反馈已记录，后台分析暂时失败，可重新分析。",
+                "evidence": [],
+                "suggested_action": "稍后重新分析。",
+                "error_type": "llm_error",
+                "retryable": True,
+                "attempts": attempts,
+            },
+            "failed",
+        )
+
     def _apply_analysis(self, feedback: MessageFeedback, analysis: dict[str, Any], status: str) -> None:
         feedback.analysis_status = status
         feedback.analysis_bucket = str(analysis.get("bucket") or "unknown")
         feedback.analysis_reason = str(analysis.get("reason") or "")[:300]
         feedback.analysis_summary = str(analysis.get("summary") or "")[:500]
-        feedback.analysis_confidence = _float_in_range(analysis.get("confidence"), 0.0, 1.0)
+        confidence = analysis.get("confidence")
+        feedback.analysis_confidence = None if confidence is None else _float_in_range(confidence, 0.0, 1.0)
         feedback.analysis_json = analysis
         feedback.analyzed_at = utc_now()
         feedback.updated_at = utc_now()
@@ -181,16 +207,31 @@ class FeedbackAnalysisService:
 
 def feedback_analysis_read(row: MessageFeedback) -> dict[str, Any]:
     bucket = row.analysis_bucket or "unknown"
+    status = _effective_analysis_status(row)
+    confidence = None if status == "failed" else row.analysis_confidence
     return {
-        "status": row.analysis_status,
+        "status": status,
         "bucket": bucket,
         "bucket_label": FEEDBACK_BUCKET_LABELS.get(bucket, bucket),
         "reason": row.analysis_reason,
         "summary": row.analysis_summary,
-        "confidence": row.analysis_confidence,
+        "confidence": confidence,
         "metadata": row.analysis_json or {},
         "analyzed_at": row.analyzed_at.isoformat() if row.analyzed_at else None,
     }
+
+
+def _effective_analysis_status(row: MessageFeedback) -> str:
+    if row.analysis_status != "analyzed":
+        return row.analysis_status
+    metadata = row.analysis_json or {}
+    if metadata.get("error_type") or metadata.get("retryable"):
+        return "failed"
+    reason = row.analysis_reason or ""
+    summary = row.analysis_summary or ""
+    if "模型分析失败" in reason or "后台分析失败" in summary:
+        return "failed"
+    return row.analysis_status
 
 
 def feedback_summary(rows: list[MessageFeedback]) -> dict[str, Any]:
@@ -198,7 +239,7 @@ def feedback_summary(rows: list[MessageFeedback]) -> dict[str, Any]:
     down_rows = [row for row in rows if row.rating == "down"]
     up_rows = [row for row in rows if row.rating == "up"]
     bucket_counts = Counter(row.analysis_bucket or "unknown" for row in down_rows)
-    status_counts = Counter(row.analysis_status or "pending" for row in rows)
+    status_counts = Counter(_effective_analysis_status(row) or "pending" for row in rows)
     top_summaries = [
         {
             "message_id": row.message_id,

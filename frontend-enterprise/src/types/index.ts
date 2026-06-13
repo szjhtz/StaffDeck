@@ -355,6 +355,7 @@ export type FeedbackMessageRead = {
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   created_at: string;
+  feedback_id?: string;
   feedback_rating?: 'up' | 'down' | null;
   feedback_updated_at?: string;
   feedback_analysis?: FeedbackAnalysisRead;

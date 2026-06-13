@@ -5,8 +5,8 @@ from sqlmodel import Session, select
 
 from app.api.chat import message_read, session_read
 from app.db import get_session
-from app.db.models import ChatSession, Message, MessageFeedback, User
-from app.feedback import FEEDBACK_BUCKET_LABELS, feedback_analysis_read, feedback_summary
+from app.db.models import ChatSession, Message, MessageFeedback, User, utc_now
+from app.feedback import FEEDBACK_BUCKET_LABELS, enqueue_feedback_analysis, feedback_analysis_read, feedback_summary
 from app.security.tenant import ensure_tenant
 
 router = APIRouter(prefix="/api/enterprise/feedback", tags=["enterprise:feedback"])
@@ -56,6 +56,7 @@ def list_feedback_sessions(
         if not chat_session or chat_session.tenant_id != tenant_id:
             continue
         latest = max(rows, key=lambda item: item.updated_at)
+        latest_analysis = feedback_analysis_read(latest)
         latest_message = db.get(Message, latest.message_id)
         user = db.get(User, chat_session.user_id) if chat_session.user_id else None
         down_rows = [item for item in rows if item.rating == "down"]
@@ -78,10 +79,10 @@ def list_feedback_sessions(
                 "latest_feedback_at": latest.updated_at.isoformat(),
                 "latest_message_id": latest.message_id,
                 "latest_message": latest_message.content if latest_message else "",
-                "analysis_status": latest.analysis_status,
-                "analysis_bucket": latest.analysis_bucket,
-                "analysis_bucket_label": FEEDBACK_BUCKET_LABELS.get(latest.analysis_bucket or "unknown", latest.analysis_bucket or "unknown"),
-                "analysis_summary": latest.analysis_summary,
+                "analysis_status": latest_analysis["status"],
+                "analysis_bucket": latest_analysis["bucket"],
+                "analysis_bucket_label": latest_analysis["bucket_label"],
+                "analysis_summary": latest_analysis["summary"],
                 "primary_bucket": primary_bucket,
                 "primary_bucket_label": FEEDBACK_BUCKET_LABELS.get(primary_bucket or "unknown", primary_bucket or "unknown"),
                 "bucket_counts": bucket_counts,
@@ -140,9 +141,41 @@ def get_feedback_session_detail(
     }
 
 
+@router.post("/{feedback_id}/reanalyze")
+def reanalyze_feedback(
+    feedback_id: str,
+    tenant_id: str = Query(...),
+    db: Session = Depends(get_session),
+) -> dict:
+    ensure_tenant(db, tenant_id)
+    row = db.get(MessageFeedback, feedback_id)
+    if not row or row.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    now = utc_now()
+    row.analysis_status = "pending"
+    row.analysis_bucket = None
+    row.analysis_reason = None
+    row.analysis_summary = None
+    row.analysis_confidence = None
+    row.analysis_json = {"retry_requested_at": now.isoformat()}
+    row.analyzed_at = None
+    row.updated_at = now
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    job = enqueue_feedback_analysis(row.tenant_id, row.id, row.session_id)
+    return {
+        "feedback_id": row.id,
+        "analysis_status": row.analysis_status,
+        "job_id": job.id,
+        "updated_at": row.updated_at.isoformat(),
+    }
+
+
 def _message_with_feedback(message: Message, feedback: MessageFeedback | None) -> dict:
     payload = message_read(message, feedback.rating if feedback else None).model_dump()
     if feedback:
+        payload["feedback_id"] = feedback.id
         payload["feedback_updated_at"] = feedback.updated_at.isoformat()
         payload["feedback_analysis"] = feedback_analysis_read(feedback)
     return payload
