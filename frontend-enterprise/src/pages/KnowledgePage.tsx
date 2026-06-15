@@ -246,10 +246,11 @@ export default function KnowledgeManagePage() {
   async function setKnowledgeBaseStatus(row: KnowledgeBaseRead, active: boolean) {
     const suffix = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : '';
     try {
-      await api.put<KnowledgeBaseRead>(`/api/enterprise/knowledge-bases/${row.id}${suffix}`, {
+      const next = await api.put<KnowledgeBaseRead>(`/api/enterprise/knowledge-bases/${row.id}${suffix}`, {
         tenant_id: TENANT_ID,
         status: active ? 'active' : 'archived',
       });
+      setKnowledgeBases((current) => current.map((item) => (item.id === next.id ? next : item)));
       message.success(active ? '已上线知识库' : '已下线知识库');
       await refresh();
     } catch (error) {

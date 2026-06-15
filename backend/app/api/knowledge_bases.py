@@ -343,21 +343,11 @@ def delete_knowledge_base(
         db.commit()
         return {"status": "hidden"}
     row = _get_knowledge_base(db, tenant_id, knowledge_base_id)
-    document_count = db.exec(
-        select(func.count(KnowledgeDocument.id)).where(
-            KnowledgeDocument.tenant_id == tenant_id,
-            KnowledgeDocument.knowledge_base_id == knowledge_base_id,
-        )
-    ).one()
-    if int(document_count or 0) > 0:
-        row.status = "archived"
-        row.updated_at = utc_now()
-        db.add(row)
-        db.commit()
-        return {"status": "archived"}
-    db.delete(row)
+    row.status = "archived"
+    row.updated_at = utc_now()
+    db.add(row)
     db.commit()
-    return {"status": "deleted"}
+    return {"status": "archived"}
 
 
 @router.post("/{knowledge_base_id}/sync-from-overall")
@@ -417,7 +407,14 @@ def knowledge_base_read(
     branch_meta: dict[str, str] | None = None,
 ) -> KnowledgeBaseRead:
     branch_status = (branch_meta or {}).get("status")
-    effective_status = "archived" if branch_status == "inactive" else (branch_status or (version_row.status if version_row else row.status))
+    if branch_status == "inactive":
+        effective_status = "archived"
+    elif branch_status == "active":
+        effective_status = "active"
+    elif branch_status:
+        effective_status = branch_status
+    else:
+        effective_status = row.status
     return KnowledgeBaseRead(
         id=row.id,
         tenant_id=row.tenant_id,

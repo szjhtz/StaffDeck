@@ -6,7 +6,8 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.db.models import KnowledgeBase, KnowledgeBucket, KnowledgeDiscoverySuggestion, Skill, Tenant, Tool
+from app.api.knowledge_bases import knowledge_base_read
+from app.db.models import KnowledgeBase, KnowledgeBaseVersion, KnowledgeBucket, KnowledgeDiscoverySuggestion, Skill, Tenant, Tool
 from app.knowledge.schema import KnowledgeSearchRequest
 from app.knowledge.service import IngestPayload, KnowledgeService
 from app.skills.skill_schema import SkillCard
@@ -88,6 +89,28 @@ def test_knowledge_ingest_creates_document_buckets_and_chunks_without_auto_disco
         )
         assert response.chunks
         assert db.exec(select(KnowledgeDiscoverySuggestion)).all() == []
+
+
+def test_knowledge_base_read_keeps_archived_rows_visible_despite_active_versions() -> None:
+    row = KnowledgeBase(id="kb_demo", tenant_id="tenant_demo", name="默认知识库", status="archived")
+    version = KnowledgeBaseVersion(
+        tenant_id="tenant_demo",
+        knowledge_base_id=row.id,
+        version="1.0.0",
+        name=row.name,
+        status="active",
+    )
+
+    overall_read = knowledge_base_read(row, {}, version_row=version)
+    branch_read = knowledge_base_read(
+        row,
+        {},
+        version_row=version,
+        branch_meta={"status": "inactive", "base_version": "1.0.0", "head_version": "1.0.0", "sync_state": "synced"},
+    )
+
+    assert overall_read.status == "archived"
+    assert branch_read.status == "archived"
 
 
 def test_confirm_discovery_is_required_before_tool_or_skill_enters_runtime() -> None:
