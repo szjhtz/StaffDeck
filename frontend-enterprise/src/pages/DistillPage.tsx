@@ -2337,6 +2337,7 @@ function SkillFlow({
                   d={edge.path}
                   key={edge.id}
                   markerEnd="url(#skill-flow-arrow)"
+                  strokeDasharray="6 14"
                 >
                   <title>{edge.title}</title>
                 </path>
