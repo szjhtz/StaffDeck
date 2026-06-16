@@ -405,10 +405,21 @@ textarea,
   white-space: nowrap;
 }
 
-.chat-agent-bound {
+.chat-agent-name {
+  min-width: 0;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 760;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-agent-description {
   min-width: 0;
   color: var(--muted);
   font-size: 11px;
+  line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -714,30 +725,6 @@ textarea,
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.chat-agent-select {
-  width: 100%;
-}
-
-.chat-agent-select .ant-select-selector {
-  height: 28px !important;
-  border-radius: 8px !important;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface) 92%, transparent), color-mix(in srgb, var(--surface-muted) 58%, transparent)) !important;
-  border-color: var(--border) !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.48);
-}
-
-.chat-agent-select .ant-select-selection-item,
-.chat-agent-select .ant-select-selection-placeholder {
-  color: var(--foreground) !important;
-  font-size: 12px;
-  font-weight: 720;
-}
-
-.chat-agent-select.ant-select-disabled .ant-select-selector {
-  opacity: 0.76;
 }
 
 .new-session-agent-copy {
@@ -1810,18 +1797,6 @@ textarea,
   border-color: var(--border);
 }
 
-:root[data-theme='dark'] .chat-agent-select .ant-select-selector {
-  background:
-    linear-gradient(180deg, rgba(30, 41, 59, 0.96), rgba(15, 23, 42, 0.96)) !important;
-  border-color: rgba(228, 185, 118, 0.28) !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055), 0 10px 28px rgba(0, 0, 0, 0.24);
-}
-
-:root[data-theme='dark'] .chat-agent-select .ant-select-arrow,
-:root[data-theme='dark'] .chat-agent-select .ant-select-selection-item {
-  color: rgba(248, 250, 252, 0.94) !important;
-}
-
 :root[data-theme='dark'] .chat-agent-dock {
   background:
     linear-gradient(180deg, rgba(30, 41, 59, 0.76), rgba(15, 23, 42, 0.9));
@@ -1928,10 +1903,6 @@ textarea,
     padding: 0 16px;
   }
 
-  .chat-agent-select {
-    width: clamp(118px, 28vw, 170px);
-  }
-
   .chat-messages {
     padding: 30px 18px;
   }
@@ -1998,10 +1969,6 @@ textarea,
 
   .chat-header {
     gap: 10px;
-  }
-
-  .chat-agent-select {
-    width: 116px;
   }
 
   .sidebar-head {

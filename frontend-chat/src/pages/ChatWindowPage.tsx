@@ -15,7 +15,7 @@ import {
   StopOutlined,
   ToolOutlined,
 } from '@ant-design/icons';
-import { Button, Empty, Input, Modal, Select, Typography, message } from 'antd';
+import { Button, Empty, Input, Modal, Typography, message } from 'antd';
 import type { MouseEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -1436,19 +1436,10 @@ export default function ChatWindowPage() {
             <span className="chat-agent-label">
               {sessionId ? '当前会话智能体' : '新会话默认智能体'}
             </span>
-            <Select
-              className="chat-agent-select"
-              size="small"
-              value={displayedAgent?.id || undefined}
-              placeholder="选择智能体"
-              popupMatchSelectWidth={220}
-              disabled={Boolean(sessionId)}
-              onChange={changeAgent}
-              options={agents.map((agent) => ({ value: agent.id, label: agent.name }))}
-            />
-            {sessionId && displayedAgent && (
-              <span className="chat-agent-bound">{displayedAgent.name}</span>
-            )}
+            <span className="chat-agent-name">{displayedAgent?.name || '暂无可用智能体'}</span>
+            <span className="chat-agent-description">
+              {displayedAgent?.description || '新建会话时选择智能体'}
+            </span>
           </div>
         </div>
       </aside>
