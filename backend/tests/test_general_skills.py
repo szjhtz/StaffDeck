@@ -719,6 +719,80 @@ def test_scene_tool_call_to_general_skill_records_expandable_trace(monkeypatch) 
         assert any(name == "general_skill_run_finished" for name, _payload in stream_events)
 
 
+def test_scene_tool_call_to_general_skill_backfills_returned_trace(monkeypatch) -> None:
+    def fake_run(self, skill, query, model_config, user_id="", max_attempts=10, event_sink=None):  # noqa: ANN001
+        trace = [
+            {"phase": "skill_loaded", "message": "已加载通用技能 中国城市天气", "slug": skill.slug},
+            {
+                "phase": "plan_created",
+                "message": "已生成 Python runner",
+                "runtime": "python",
+                "code": "print('ok')\n",
+            },
+            {"phase": "stdout_chunk", "text": "ok"},
+            {"phase": "reply_created", "message": "已生成最终回复"},
+        ]
+        return GeneralSkillRunResponse(
+            skill_slug=skill.slug,
+            execution_trace=trace,
+            generated_code=trace[1]["code"],
+            stdout="ok",
+            stderr="",
+            structured_result={"success": True},
+            reply="北京天气已查询。",
+        )
+
+    monkeypatch.setattr(GeneralSkillRunner, "run", fake_run)
+
+    with _test_session() as db:
+        _seed_minimal_tenant(db)
+        db.add(
+            GeneralSkill(
+                tenant_id="tenant_demo",
+                slug="weather-zh",
+                name="中国城市天气",
+                description="中国城市天气查询工具",
+                skill_markdown=WEATHER_SKILL_MD,
+                status="published",
+            )
+        )
+        db.add(
+            ChatSession(
+                id="session_general_skill_tool_backfill",
+                tenant_id="tenant_demo",
+                user_id="user_demo",
+                active_skill_id="purchase",
+                active_step_id="collect_product",
+            )
+        )
+        db.commit()
+
+        stream_events: list[tuple[str, dict[str, object]]] = []
+        result = AgentLoop(db)._execute_tool_call(
+            ChatTurnRequest(
+                tenant_id="tenant_demo",
+                session_id="session_general_skill_tool_backfill",
+                user_id="user_demo",
+                message="北京天气怎么样",
+            ),
+            db.get(ChatSession, "session_general_skill_tool_backfill"),
+            ToolCall(name="general_skill.weather-zh", arguments={"query": "北京天气怎么样"}),
+            tool_call_id="toolcall_weather_backfill",
+            stream_events=stream_events,
+        )
+
+        assert result.success is True
+        rows = db.exec(select(AgentEvent).where(AgentEvent.session_id == "session_general_skill_tool_backfill")).all()
+        trace_payloads = [row.payload_json for row in rows if row.event_type == "general_skill_trace"]
+        assert [payload.get("phase") for payload in trace_payloads] == [
+            "skill_loaded",
+            "plan_created",
+            "stdout_chunk",
+            "reply_created",
+        ]
+        assert [name for name, _payload in stream_events].count("general_skill_trace") == len(trace_payloads)
+
+
 def test_reflection_can_retry_general_skill_with_user_query() -> None:
     loop = AgentLoop.__new__(AgentLoop)
     tool_call = loop._tool_call_from_reflection(

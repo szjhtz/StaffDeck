@@ -3005,8 +3005,13 @@ class AgentLoop:
                 error=ToolError(code="MISSING_MODEL_CONFIG", message="没有默认模型配置。"),
             )
         query = str(tool_call.arguments.get("query") or request.message).strip()
+        emitted_trace_keys: set[str] = set()
 
-        def trace_sink(trace_item: dict[str, Any]) -> None:
+        def trace_key(trace_item: dict[str, Any]) -> str:
+            return json.dumps(trace_item, ensure_ascii=False, sort_keys=True, default=str)
+
+        def emit_general_skill_trace(trace_item: dict[str, Any]) -> None:
+            emitted_trace_keys.add(trace_key(trace_item))
             payload: dict[str, object] = {
                 "skill_slug": skill.slug,
                 "skill_name": skill.name,
@@ -3015,6 +3020,9 @@ class AgentLoop:
             self.events.record(request.tenant_id, chat_session.id, "general_skill_trace", payload)
             if stream_events is not None:
                 stream_events.append(("general_skill_trace", payload))
+
+        def trace_sink(trace_item: dict[str, Any]) -> None:
+            emit_general_skill_trace(trace_item)
 
         try:
             response = self.general_skill_runner.run(
@@ -3031,6 +3039,9 @@ class AgentLoop:
                 data=None,
                 error=ToolError(code="GENERAL_SKILL_EXECUTION_ERROR", message=str(exc)),
             )
+        for trace_item in response.execution_trace:
+            if trace_key(trace_item) not in emitted_trace_keys:
+                emit_general_skill_trace(trace_item)
         structured = response.structured_result if isinstance(response.structured_result, dict) else {}
         success = structured.get("success")
         is_success = True if success is None else bool(success)
