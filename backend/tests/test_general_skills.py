@@ -18,11 +18,17 @@ from app.api.general_skills import (
 from app.core import AgentLoop
 from app.db.models import AgentEvent, AgentProfile, ChatSession, GeneralSkill, ModelConfig, Skill, Tenant, User
 from app.general_skills.runner import GeneralSkillRunner
-from app.general_skills.schema import GeneralSkillClawHubImportRequest, GeneralSkillImportRequest, GeneralSkillRunRequest
+from app.general_skills.schema import (
+    GeneralSkillClawHubImportRequest,
+    GeneralSkillImportRequest,
+    GeneralSkillRunRequest,
+    GeneralSkillRunResponse,
+)
 from app.llm import LLMClient, LLMError
 from app.security.auth import hash_password
 from app.security.encryption import encrypt_secret
 from app.session.session_schema import ChatTurnRequest
+from app.tools.tool_schema import ToolCall
 
 
 WEATHER_SKILL_MD = """# 中国城市天气查询工具
@@ -626,6 +632,89 @@ def test_general_skill_response_keeps_active_scene_context(monkeypatch) -> None:
         assert response.session_state.active_skill_id == "purchase"
         assert response.session_state.active_step_id == "collect_product"
         assert calls == ["router", "selector", "runner", "reply", "response"]
+
+
+def test_scene_tool_call_to_general_skill_records_expandable_trace(monkeypatch) -> None:
+    def fake_run(self, skill, query, model_config, user_id="", max_attempts=10, event_sink=None):  # noqa: ANN001
+        trace = [
+            {"phase": "skill_loaded", "message": "已加载通用技能 中国城市天气", "slug": skill.slug},
+            {
+                "phase": "plan_created",
+                "message": "已生成 Python runner",
+                "runtime": "python",
+                "code": "import json\nprint(json.dumps({'success': True, 'city': '北京'}, ensure_ascii=False))\n",
+                "rationale": "查询天气。",
+            },
+            {"phase": "attempt_started", "message": "开始第 1 次运行", "attempt": 1},
+            {"phase": "stdout_chunk", "text": "{\"success\": true, \"city\": \"北京\"}"},
+            {"phase": "reflection_passed", "message": "第 1 次运行结果可用", "attempt": 1},
+            {"phase": "reply_created", "message": "已生成最终回复"},
+        ]
+        if event_sink:
+            for item in trace:
+                event_sink(item)
+        return GeneralSkillRunResponse(
+            skill_slug=skill.slug,
+            execution_trace=trace,
+            generated_code=trace[1]["code"],
+            stdout="{\"success\": true, \"city\": \"北京\"}",
+            stderr="",
+            structured_result={"success": True, "city": "北京"},
+            reply="北京天气已查询。",
+        )
+
+    monkeypatch.setattr(GeneralSkillRunner, "run", fake_run)
+
+    with _test_session() as db:
+        _seed_minimal_tenant(db)
+        db.add(
+            GeneralSkill(
+                tenant_id="tenant_demo",
+                slug="weather-zh",
+                name="中国城市天气",
+                description="中国城市天气查询工具",
+                skill_markdown=WEATHER_SKILL_MD,
+                status="published",
+            )
+        )
+        db.add(
+            ChatSession(
+                id="session_general_skill_tool",
+                tenant_id="tenant_demo",
+                user_id="user_demo",
+                active_skill_id="purchase",
+                active_step_id="collect_product",
+            )
+        )
+        db.commit()
+
+        stream_events: list[tuple[str, dict[str, object]]] = []
+        result = AgentLoop(db)._execute_tool_call(
+            ChatTurnRequest(
+                tenant_id="tenant_demo",
+                session_id="session_general_skill_tool",
+                user_id="user_demo",
+                message="北京天气怎么样",
+            ),
+            db.get(ChatSession, "session_general_skill_tool"),
+            ToolCall(name="general_skill.weather-zh", arguments={"query": "北京天气怎么样"}),
+            tool_call_id="toolcall_weather",
+            stream_events=stream_events,
+        )
+
+        assert result.success is True
+        assert result.data["generated_code"].startswith("import json")
+        rows = db.exec(select(AgentEvent).where(AgentEvent.session_id == "session_general_skill_tool")).all()
+        event_types = [row.event_type for row in rows]
+        assert event_types[0] == "tool_call_started"
+        assert "general_skill_trace" in event_types
+        assert "general_skill_run_finished" in event_types
+        assert event_types[-1] == "tool_call_finished"
+        trace_payloads = [row.payload_json for row in rows if row.event_type == "general_skill_trace"]
+        assert any(payload.get("phase") == "plan_created" and "import json" in str(payload.get("code")) for payload in trace_payloads)
+        assert any(payload.get("phase") == "stdout_chunk" for payload in trace_payloads)
+        assert [name for name, _payload in stream_events].count("general_skill_trace") == len(trace_payloads)
+        assert any(name == "general_skill_run_finished" for name, _payload in stream_events)
 
 
 def test_chat_turn_treats_unmatched_scene_as_chat_when_general_skill_not_selected(

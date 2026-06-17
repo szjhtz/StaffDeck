@@ -2295,7 +2295,13 @@ class AgentLoop:
                 break
             seen_calls.add(signature)
             self._emit_tool_status(tool_call, tool_call_id, stream_events, status_callback)
-            tool_result = self._execute_tool_call(request, chat_session, tool_call, tool_call_id)
+            tool_result = self._execute_tool_call(
+                request,
+                chat_session,
+                tool_call,
+                tool_call_id,
+                stream_events=stream_events,
+            )
             self._record_tool_result_in_slots(chat_session, tool_call, tool_result)
             if stream_events is not None:
                 stream_events.append(
@@ -2892,6 +2898,7 @@ class AgentLoop:
         chat_session: ChatSession,
         tool_call: ToolCall,
         tool_call_id: str | None = None,
+        stream_events: list[tuple[str, dict[str, object]]] | None = None,
     ) -> ToolResult:
         started_payload = tool_call.model_dump(mode="json")
         if tool_call_id:
@@ -2928,7 +2935,13 @@ class AgentLoop:
                 self.db.commit()
                 self.db.refresh(chat_session)
                 return tool_result
-            tool_result = self._execute_general_skill_tool_call(request, tool_call, chat_session.agent_id)
+            tool_result = self._execute_general_skill_tool_call(
+                request,
+                chat_session,
+                tool_call,
+                chat_session.agent_id,
+                stream_events=stream_events,
+            )
         else:
             tool_result = self.tool_executor.execute(
                 request.tenant_id, tool_call, chat_session.active_skill_id
@@ -2950,8 +2963,10 @@ class AgentLoop:
     def _execute_general_skill_tool_call(
         self,
         request: ChatTurnRequest,
+        chat_session: ChatSession,
         tool_call: ToolCall,
         agent_id: str | None,
+        stream_events: list[tuple[str, dict[str, object]]] | None = None,
     ) -> ToolResult:
         slug = tool_call.name.removeprefix(GENERAL_SKILL_TOOL_PREFIX).strip()
         if not slug:
@@ -2985,8 +3000,25 @@ class AgentLoop:
                 error=ToolError(code="MISSING_MODEL_CONFIG", message="没有默认模型配置。"),
             )
         query = str(tool_call.arguments.get("query") or request.message).strip()
+
+        def trace_sink(trace_item: dict[str, Any]) -> None:
+            payload: dict[str, object] = {
+                "skill_slug": skill.slug,
+                "skill_name": skill.name,
+                **trace_item,
+            }
+            self.events.record(request.tenant_id, chat_session.id, "general_skill_trace", payload)
+            if stream_events is not None:
+                stream_events.append(("general_skill_trace", payload))
+
         try:
-            response = self.general_skill_runner.run(skill, query, model_config, request.user_id)
+            response = self.general_skill_runner.run(
+                skill,
+                query,
+                model_config,
+                request.user_id,
+                event_sink=trace_sink,
+            )
         except Exception as exc:
             return ToolResult(
                 tool_name=tool_call.name,
@@ -2997,6 +3029,17 @@ class AgentLoop:
         structured = response.structured_result if isinstance(response.structured_result, dict) else {}
         success = structured.get("success")
         is_success = True if success is None else bool(success)
+        finished_payload: dict[str, object] = {
+            "skill_slug": response.skill_slug,
+            "success": is_success,
+            "stdout_preview": response.stdout[:600],
+            "stderr_preview": response.stderr[:600],
+            "structured_result": response.structured_result,
+            "tool_call": tool_call.model_dump(mode="json"),
+        }
+        self.events.record(request.tenant_id, chat_session.id, "general_skill_run_finished", finished_payload)
+        if stream_events is not None:
+            stream_events.append(("general_skill_run_finished", finished_payload))
         data = {
             "skill_slug": response.skill_slug,
             "reply": response.reply,
