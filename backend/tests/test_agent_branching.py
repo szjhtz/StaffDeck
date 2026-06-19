@@ -6,8 +6,9 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.agents.branching import copy_overall_scope_to_agent, require_overall_agent, update_branch_skill, visible_skill_rows
-from app.api.agents import _skill_branch_read
-from app.db.models import AgentProfile, AgentSkillBranch, Skill, Tenant
+from app.agents.schema import AgentResourceImportRequest
+from app.api.agents import _skill_branch_read, import_agent_resources
+from app.db.models import AgentProfile, AgentResourceBinding, AgentSkillBranch, GeneralSkill, KnowledgeBase, Skill, Tenant
 
 
 def test_agent_skill_branch_is_copy_on_write_and_reports_branch_state() -> None:
@@ -110,6 +111,78 @@ def test_management_rows_keep_archived_global_and_inactive_branch_skills() -> No
 
         assert "global_archived" in overall_ids
         assert branch_by_id["branch_inactive"].status == "archived"
+
+
+def test_disabled_open_gallery_resources_cannot_be_learned() -> None:
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        overall = AgentProfile(id="agent_overall", tenant_id="tenant_demo", name="整体智能体", is_overall=True)
+        target = AgentProfile(id="agent_branch", tenant_id="tenant_demo", name="客服分支", is_overall=False)
+        db.add(overall)
+        db.add(target)
+        archived_skill = Skill(
+            id="skill_archived",
+            tenant_id="tenant_demo",
+            skill_id="archived_sop",
+            version="1.0.0",
+            name="已停用 SOP",
+            business_domain="电商",
+            description="停用后不可学习",
+            status="archived",
+            content_json=_graph("已停用 SOP", "1.0.0"),
+        )
+        archived_general_skill = GeneralSkill(
+            id="general_archived",
+            tenant_id="tenant_demo",
+            slug="archived-general-skill",
+            name="已停用通用技能",
+            skill_markdown="# 已停用通用技能",
+            status="archived",
+        )
+        archived_knowledge_base = KnowledgeBase(
+            id="kb_archived",
+            tenant_id="tenant_demo",
+            name="已停用业务资料",
+            status="archived",
+        )
+        db.add(archived_skill)
+        db.add(archived_general_skill)
+        db.add(archived_knowledge_base)
+        db.commit()
+
+        for resource_type, resource_id in [
+            ("skill", archived_skill.id),
+            ("general_skill", archived_general_skill.id),
+            ("knowledge_base", archived_knowledge_base.id),
+        ]:
+            result = import_agent_resources(
+                target.id,
+                AgentResourceImportRequest(
+                    tenant_id="tenant_demo",
+                    source_agent_id=overall.id,
+                    resource_type=resource_type,  # type: ignore[arg-type]
+                    resource_ids=[resource_id],
+                ),
+                db,
+            )
+
+            assert result["imported"] == []
+            assert result["missing"] == [{"resource_id": resource_id, "reason": "disabled_in_open_gallery"}]
+            assert db.exec(
+                select(AgentResourceBinding).where(
+                    AgentResourceBinding.tenant_id == "tenant_demo",
+                    AgentResourceBinding.agent_id == target.id,
+                    AgentResourceBinding.resource_type == resource_type,
+                    AgentResourceBinding.resource_id == resource_id,
+                )
+            ).first() is None
+
+        inherited = AgentProfile(id="agent_inherited", tenant_id="tenant_demo", name="继承分支", is_overall=False)
+        db.add(inherited)
+        db.flush()
+        copy_overall_scope_to_agent(db, "tenant_demo", inherited)
+
+        assert db.exec(select(AgentResourceBinding).where(AgentResourceBinding.agent_id == inherited.id)).all() == []
 
 
 def _graph(name: str, version: str) -> dict[str, object]:

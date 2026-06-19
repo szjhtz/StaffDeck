@@ -614,7 +614,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
         `/api/enterprise/general-skills?tenant_id=${TENANT_ID}&agent_id=${encodeURIComponent(sourceAgentId)}`,
       );
       const existingIds = new Set(rows.map((item) => item.id));
-      setAgentImportSourceSkills(sourceRows.filter((item) => !existingIds.has(item.id)));
+      setAgentImportSourceSkills(sourceRows.filter((item) => item.status === 'published' && !existingIds.has(item.id)));
     } catch (error) {
       message.error(error instanceof Error ? error.message : '加载来源技能失败');
     }
@@ -1355,7 +1355,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
       >
         <Space direction="vertical" size={14} style={{ width: '100%' }}>
           <Typography.Text type="secondary">
-            学习会把来源员工或开放广场平台可见的技能绑定到当前员工；不会覆盖当前编辑区内容。
+            仅可学习来源员工或开放广场平台中已启用的技能；不会覆盖当前编辑区内容。
           </Typography.Text>
           <Select
             value={agentImportSourceAgentId || undefined}
@@ -1380,7 +1380,7 @@ export default function GeneralSkillsPage({ embedded = false }: { embedded?: boo
               label: `${item.name} · ${item.slug} · ${statusLabel(item.status)}`,
             }))}
             optionFilterProp="label"
-            notFoundContent={agentImportSourceAgentId ? '没有可学习的技能' : '请先选择来源员工'}
+            notFoundContent={agentImportSourceAgentId ? '没有可学习的已启用技能' : '请先选择来源员工'}
             style={{ width: '100%' }}
           />
         </Space>

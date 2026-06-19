@@ -239,6 +239,17 @@ def import_agent_resources(
         if not source_agent.is_overall and not source_binding:
             missing.append({"resource_id": identifier, "reason": "not_visible_in_source_agent"})
             continue
+        block_reason = _blocked_learning_reason(
+            db,
+            request.tenant_id,
+            source_agent,
+            request.resource_type,
+            resolved,
+            source_binding,
+        )
+        if block_reason:
+            missing.append({"resource_id": identifier, "reason": block_reason})
+            continue
         if target_agent.is_overall:
             _import_resource_to_overall(db, request.tenant_id, source_agent, request.resource_type, resolved)
         else:
@@ -290,6 +301,8 @@ def sync_agent_skill_from_overall(
     if agent.is_overall:
         raise HTTPException(status_code=400, detail="Overall agent is already the trunk")
     skill = _get_global_skill(db, tenant_id, skill_id)
+    if skill.status != "published":
+        raise HTTPException(status_code=400, detail="Disabled SOP cannot be learned from the open gallery")
     branch = sync_branch_from_overall(db, tenant_id, agent_id, skill)
     db.commit()
     return {"status": "synced", "skill_id": skill_id, "head_version": branch.head_version}
@@ -459,6 +472,8 @@ def _copy_resource_binding(
     target_agent_id: str,
     binding: AgentResourceBinding,
 ) -> None:
+    if binding.status != "active":
+        return
     copied_binding = AgentResourceBinding(
         tenant_id=tenant_id,
         agent_id=target_agent_id,
@@ -507,6 +522,51 @@ def _source_resource_binding(
             AgentResourceBinding.resource_id == resource_id,
         )
     ).first()
+
+
+def _blocked_learning_reason(
+    db: Session,
+    tenant_id: str,
+    source_agent: AgentProfile,
+    resource_type: str,
+    resolved: Skill | GeneralSkill | KnowledgeBase,
+    source_binding: AgentResourceBinding | None,
+) -> str | None:
+    if source_agent.is_overall:
+        return None if _open_gallery_resource_enabled(resource_type, resolved) else "disabled_in_open_gallery"
+    if not source_binding or source_binding.status != "active":
+        return "inactive_in_source_agent"
+    if resource_type == "skill" and isinstance(resolved, Skill):
+        branch = db.exec(
+            select(AgentSkillBranch).where(
+                AgentSkillBranch.tenant_id == tenant_id,
+                AgentSkillBranch.agent_id == source_agent.id,
+                AgentSkillBranch.skill_id == resolved.skill_id,
+            )
+        ).first()
+        if branch and branch.status != "active":
+            return "inactive_in_source_agent"
+    if resource_type == "knowledge_base" and isinstance(resolved, KnowledgeBase):
+        branch = db.exec(
+            select(AgentKnowledgeBranch).where(
+                AgentKnowledgeBranch.tenant_id == tenant_id,
+                AgentKnowledgeBranch.agent_id == source_agent.id,
+                AgentKnowledgeBranch.knowledge_base_id == resolved.id,
+            )
+        ).first()
+        if branch and branch.status != "active":
+            return "inactive_in_source_agent"
+    return None
+
+
+def _open_gallery_resource_enabled(resource_type: str, resolved: Skill | GeneralSkill | KnowledgeBase) -> bool:
+    if resource_type == "skill" and isinstance(resolved, Skill):
+        return resolved.status == "published"
+    if resource_type == "general_skill" and isinstance(resolved, GeneralSkill):
+        return resolved.status == "published"
+    if resource_type == "knowledge_base" and isinstance(resolved, KnowledgeBase):
+        return resolved.status == "active"
+    return False
 
 
 def _import_resource_to_overall(

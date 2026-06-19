@@ -276,7 +276,7 @@ export default function SkillsPage() {
     if (!sourceAgentId) return;
     try {
       const sourceRows = await api.get<SkillRead[]>(`/api/enterprise/agents/${sourceAgentId}/skills?tenant_id=${TENANT_ID}`);
-      setImportSourceSkills(sourceRows);
+      setImportSourceSkills(sourceRows.filter((item) => item.status === 'published'));
     } catch (error) {
       message.error(error instanceof Error ? error.message : '加载来源 SOP 失败');
     }
@@ -568,10 +568,11 @@ export default function SkillsPage() {
               label: `${item.name} · ${item.skill_id} · ${statusText(item.status)}`,
             }))}
             optionFilterProp="label"
+            notFoundContent={importSourceAgentId ? '没有可学习的已启用 SOP' : '请先选择来源员工'}
             style={{ width: '100%' }}
           />
           <Typography.Text type="secondary">
-            学习会复制来源员工或开放广场平台中的版本和启用状态；管理员分享到开放广场平台后，其他员工可继续学习复用。
+            仅可学习来源员工或开放广场平台中已启用的 SOP；管理员分享到开放广场平台后，其他员工可继续学习复用。
           </Typography.Text>
         </Space>
       </Modal>

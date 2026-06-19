@@ -123,10 +123,11 @@ export default function ToolsPage() {
     },
   ];
 
-  const bucketStats = useMemo(() => buildBucketStats(rows), [rows]);
+  const visibleRows = useMemo(() => (isOverallAgent ? rows : rows.filter((row) => row.enabled)), [isOverallAgent, rows]);
+  const bucketStats = useMemo(() => buildBucketStats(visibleRows), [visibleRows]);
   const filteredRows = useMemo(() => {
     const text = searchText.trim().toLowerCase();
-    return rows.filter((row) => {
+    return visibleRows.filter((row) => {
       const bucketMatch = bucketFilter === '__all__' || (row.bucket || '未分桶') === bucketFilter;
       if (!bucketMatch) return false;
       if (!text) return true;
@@ -138,12 +139,7 @@ export default function ToolsPage() {
         row.url,
       ].some((value) => value.toLowerCase().includes(text));
     });
-  }, [bucketFilter, rows, searchText]);
-
-  const bucketOptions = useMemo(
-    () => Array.from(new Set(['未分桶', ...rows.map((row) => row.bucket || '未分桶')])).map((value) => ({ value, label: value })),
-    [rows],
-  );
+  }, [bucketFilter, searchText, visibleRows]);
 
   return (
     <>
@@ -170,8 +166,8 @@ export default function ToolsPage() {
             onClick={() => setBucketFilter('__all__')}
           >
             <span className="tool-bucket-name">全部工具</span>
-            <strong>{rows.length}</strong>
-            <span>{rows.filter((row) => row.enabled).length} 个启用</span>
+            <strong>{visibleRows.length}</strong>
+            <span>{visibleRows.filter((row) => row.enabled).length} 个启用</span>
           </button>
           {bucketStats.map((item) => (
             <button
@@ -193,7 +189,7 @@ export default function ToolsPage() {
             value={searchText}
             onChange={(event) => setSearchText(event.target.value)}
           />
-          <Typography.Text type="secondary">当前显示 {filteredRows.length} / {rows.length} 个工具</Typography.Text>
+          <Typography.Text type="secondary">当前显示 {filteredRows.length} / {visibleRows.length} 个工具</Typography.Text>
         </div>
         <Table
           rowKey="id"

@@ -418,6 +418,10 @@ def sync_knowledge_branch_from_overall(
     knowledge_base_id: str,
 ) -> AgentKnowledgeBranch:
     kb = _get_knowledge_base(db, tenant_id, knowledge_base_id)
+    if kb.status != "active":
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail="Disabled knowledge base cannot be learned from the open gallery")
     branch = _ensure_knowledge_branch(db, tenant_id, agent_id, kb)
     current_version = _current_knowledge_version(kb)
     ensure_knowledge_base_version(db, kb, current_version)
@@ -511,13 +515,13 @@ def model_for_agent(db: Session, tenant_id: str, agent_id: str | None, role: str
 
 def copy_overall_scope_to_agent(db: Session, tenant_id: str, agent: AgentProfile) -> None:
     skills = db.exec(
-        select(Skill).where(Skill.tenant_id == tenant_id, Skill.status != "deleted")
+        select(Skill).where(Skill.tenant_id == tenant_id, Skill.status == "published")
     ).all()
     for skill in skills:
         _ensure_binding(db, tenant_id, agent.id, "skill", skill.id, _binding_status_from_resource_status(skill.status))
         ensure_agent_skill_branch(db, tenant_id, agent.id, skill)
     knowledge_bases = db.exec(
-        select(KnowledgeBase).where(KnowledgeBase.tenant_id == tenant_id, KnowledgeBase.status != "deleted")
+        select(KnowledgeBase).where(KnowledgeBase.tenant_id == tenant_id, KnowledgeBase.status == "active")
     ).all()
     for kb in knowledge_bases:
         _ensure_binding(db, tenant_id, agent.id, "knowledge_base", kb.id, _binding_status_from_resource_status(kb.status))
@@ -528,7 +532,7 @@ def copy_overall_scope_to_agent(db: Session, tenant_id: str, agent: AgentProfile
     from app.db.models import GeneralSkill
 
     general_skills = db.exec(
-        select(GeneralSkill).where(GeneralSkill.tenant_id == tenant_id, GeneralSkill.status != "deleted")
+        select(GeneralSkill).where(GeneralSkill.tenant_id == tenant_id, GeneralSkill.status == "published")
     ).all()
     for general_skill in general_skills:
         _ensure_binding(

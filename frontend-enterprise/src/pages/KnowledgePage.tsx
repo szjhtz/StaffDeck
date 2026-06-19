@@ -264,7 +264,7 @@ export default function KnowledgeManagePage() {
       const rows = await api.get<KnowledgeBaseRead[]>(
         `/api/enterprise/knowledge-bases?tenant_id=${TENANT_ID}&agent_id=${encodeURIComponent(sourceAgentId)}`,
       );
-      setImportSourceKnowledgeBases(rows);
+      setImportSourceKnowledgeBases(rows.filter((item) => item.status === 'active'));
     } catch (error) {
       message.error(error instanceof Error ? error.message : '加载来源知识库失败');
     }
@@ -680,10 +680,11 @@ export default function KnowledgeManagePage() {
               label: `${item.name} · ${item.version || '1.0.0'} · ${item.status}`,
             }))}
             optionFilterProp="label"
+            notFoundContent={importSourceAgentId ? '没有可学习的已启用业务资料' : '请先选择来源员工'}
             style={{ width: '100%' }}
           />
           <Typography.Text type="secondary">
-            学习会复制开放广场平台或来源员工中选中的业务资料；分享到开放广场平台后，其他员工可继续复用。
+            仅可学习开放广场平台或来源员工中已启用的业务资料；分享到开放广场平台后，其他员工可继续复用。
           </Typography.Text>
         </Space>
       </Modal>
