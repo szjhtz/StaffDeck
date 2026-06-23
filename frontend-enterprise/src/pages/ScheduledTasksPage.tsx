@@ -44,7 +44,7 @@ type TaskFormValues = {
   max_runs?: number;
 };
 
-type TaskListFilter = 'all' | 'pending' | 'completed' | 'paused' | 'archived';
+type TaskListFilter = 'all' | 'pending' | 'completed' | 'paused';
 type RunListFilter = 'all' | 'pending' | 'completed' | 'failed';
 
 const INITIAL_VALUES: TaskFormValues = {
@@ -205,7 +205,8 @@ export default function ScheduledTasksPage() {
   }
 
   const activeRows = rows.filter((item) => item.status === 'active');
-  const visibleRows = rows.filter((item) => matchesTaskFilter(item, taskFilter));
+  const taskRows = rows.filter((item) => item.status !== 'archived');
+  const visibleRows = taskRows.filter((item) => matchesTaskFilter(item, taskFilter));
   const visibleRunRows = allRunRows.filter((item) => matchesRunFilter(item, runFilter));
   const renderTaskActions = (row: ScheduledTaskRead) => {
     const isArchived = row.status === 'archived';
@@ -370,7 +371,7 @@ export default function ScheduledTasksPage() {
           <div className="scheduled-task-stats">
             <TaskStat title="当前员工" value={selectedAgent ? employeeDisplayName(selectedAgent) : '未选择'} />
             <TaskStat title="待完成任务" value={activeRows.length} />
-            <TaskStat title="已完成任务" value={rows.filter((item) => item.status === 'completed').length} />
+            <TaskStat title="已完成任务" value={taskRows.filter((item) => item.status === 'completed').length} />
             <TaskStat title="执行记录" value={allRunRows.length} />
           </div>
           <Card
@@ -386,7 +387,6 @@ export default function ScheduledTasksPage() {
                   { label: '待完成', value: 'pending' },
                   { label: '已完成', value: 'completed' },
                   { label: '已暂停', value: 'paused' },
-                  { label: '已删除', value: 'archived' },
                 ]}
               />
             )}
@@ -690,7 +690,6 @@ function matchesTaskFilter(row: ScheduledTaskRead, filter: TaskListFilter): bool
   if (filter === 'pending') return row.status === 'active';
   if (filter === 'paused') return row.status === 'paused';
   if (filter === 'completed') return row.status === 'completed';
-  if (filter === 'archived') return row.status === 'archived';
   return true;
 }
 
