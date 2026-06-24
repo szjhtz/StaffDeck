@@ -5,7 +5,6 @@ import { getAuthSession } from './api/client';
 import ChatWindowPage from './pages/ChatWindowPage';
 import EmployeeGalleryPage from './pages/EmployeeGalleryPage';
 import LoginPage from './pages/LoginPage';
-import SessionListPage from './pages/SessionListPage';
 import { useThemeController } from './theme';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -42,7 +41,7 @@ export default function App() {
       <BrowserRouter basename="/chat">
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/" element={<RequireAuth><SessionListPage /></RequireAuth>} />
+          <Route path="/" element={<RequireAuth><EmployeeGalleryPage /></RequireAuth>} />
           <Route path="/employees" element={<RequireAuth><EmployeeGalleryPage /></RequireAuth>} />
           <Route path="/:sessionId" element={<RequireAuth><ChatWindowPage /></RequireAuth>} />
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -5,8 +5,8 @@ import {
   MenuUnfoldOutlined,
   RightOutlined,
 } from '@ant-design/icons';
-import { Button, Empty, Typography, message } from 'antd';
-import { useEffect, useState } from 'react';
+import { Button, Empty, Select, Typography, message } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, clearAuthSession, getAuthSession, isAuthError } from '../api/client';
 import EmployeeAvatarMark from '../components/EmployeeAvatarMark';
@@ -33,6 +33,7 @@ function SessionChatIcon() {
 export default function EmployeeGalleryPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
+  const [sessionAgentFilter, setSessionAgentFilter] = useState('all');
   const [selectedAgentId, setSelectedAgentId] = useState(() => window.localStorage.getItem('skill_agent_selected_agent') || '');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => (
     window.localStorage.getItem('skill_agent_sidebar_collapsed') === 'true'
@@ -44,6 +45,30 @@ export default function EmployeeGalleryPage() {
   const personalAgents = availableAgents.filter((agent) => !isGalleryEmployee(agent) || isEmployeeOwnedBy(agent, auth?.user));
   const personalAgentIds = new Set(personalAgents.map((agent) => agent.id));
   const galleryAgents = availableAgents.filter((agent) => isGalleryEmployee(agent) && !personalAgentIds.has(agent.id));
+  const agentById = useMemo(() => new Map(availableAgents.map((agent) => [agent.id, agent])), [availableAgents]);
+  const visibleSessions = useMemo(() => (
+    sessionAgentFilter === 'all'
+      ? sessions
+      : sessions.filter((session) => session.agent_id === sessionAgentFilter)
+  ), [sessionAgentFilter, sessions]);
+  const sessionFilterOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    sessions.forEach((session) => {
+      if (!session.agent_id || !agentById.has(session.agent_id)) return;
+      counts.set(session.agent_id, (counts.get(session.agent_id) || 0) + 1);
+    });
+    const rows = Array.from(counts.keys())
+      .map((agentId) => agentById.get(agentId))
+      .filter((agent): agent is AgentProfileRead => Boolean(agent))
+      .sort((a, b) => employeeDisplayName(a).localeCompare(employeeDisplayName(b), 'zh-Hans-CN'));
+    return [
+      { value: 'all', label: `全部员工 · ${sessions.length}` },
+      ...rows.map((agent) => ({
+        value: agent.id,
+        label: `${employeeDisplayName(agent)} · ${counts.get(agent.id) || 0}`,
+      })),
+    ];
+  }, [agentById, sessions]);
 
   const loadSessions = () =>
     api
@@ -77,6 +102,13 @@ export default function EmployeeGalleryPage() {
       })
       .catch(() => setAgents([]));
   }, [auth?.user, tenantId]);
+
+  useEffect(() => {
+    if (sessionAgentFilter === 'all') return;
+    if (!sessionFilterOptions.some((item) => item.value === sessionAgentFilter)) {
+      setSessionAgentFilter('all');
+    }
+  }, [sessionAgentFilter, sessionFilterOptions]);
 
   function toggleSidebar() {
     setSidebarCollapsed((current) => {
@@ -185,15 +217,30 @@ export default function EmployeeGalleryPage() {
           </button>
         )}
         <div className="session-list-scroll">
+          {!sidebarCollapsed && (
+            <div className="session-filter-bar">
+              <span className="session-filter-label">员工会话</span>
+              <Select
+                size="small"
+                className="session-filter-select"
+                value={sessionAgentFilter}
+                options={sessionFilterOptions}
+                onChange={setSessionAgentFilter}
+              />
+            </div>
+          )}
           <div className="session-section-label">任务记录</div>
-          {sessions.length === 0 ? (
+          {visibleSessions.length === 0 ? (
             <div className="session-list-empty">
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前员工暂无任务记录" />
             </div>
           ) : (
-            sessions.map((session) => {
+            visibleSessions.map((session) => {
               const sessionTitle = session.title || session.id;
               const sessionSummary = session.summary || session.last_agent_question || '新任务';
+              const sessionAgent = session.agent_id ? agentById.get(session.agent_id) || null : null;
+              const sessionProfile = sessionAgent ? employeeProfile(sessionAgent) : null;
+              const sessionAgentFallback = sessionAgent ? employeeDisplayName(sessionAgent).slice(0, 1) : '员';
               return (
                 <div
                   key={session.id}
@@ -209,9 +256,19 @@ export default function EmployeeGalleryPage() {
                   }}
                 >
                   <div className="session-card-content">
+                    <span className="session-title-icon session-title-avatar">
+                      {sessionProfile ? (
+                        <EmployeeAvatarMark
+                          profile={sessionProfile}
+                          fallback={sessionAgentFallback || '员'}
+                          className="session-agent-avatar"
+                        />
+                      ) : (
+                        <SessionChatIcon />
+                      )}
+                    </span>
                     <div className="session-meta">
                       <div className="session-title" title={sessionTitle}>
-                        <span className="session-title-icon"><SessionChatIcon /></span>
                         <span className="session-title-text">{sessionTitle}</span>
                       </div>
                       <div className="session-summary" title={sessionSummary}>
