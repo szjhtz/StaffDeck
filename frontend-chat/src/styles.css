@@ -1835,6 +1835,7 @@ textarea,
 .markdown-message ul,
 .markdown-message ol,
 .markdown-message pre,
+.markdown-message .md-table-scroll,
 .markdown-message h1,
 .markdown-message h2,
 .markdown-message h3,
@@ -1849,7 +1850,8 @@ textarea,
 .markdown-message p:last-child,
 .markdown-message ul:last-child,
 .markdown-message ol:last-child,
-.markdown-message pre:last-child {
+.markdown-message pre:last-child,
+.markdown-message .md-table-scroll:last-child {
   margin-bottom: 0;
 }
 
@@ -1897,6 +1899,63 @@ textarea,
 .markdown-message .md-code-block {
   max-width: 100%;
   margin-bottom: 12px;
+}
+
+.markdown-message .md-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 10px 0 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 82%, var(--surface-subtle));
+}
+
+.markdown-message .md-table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.96em;
+  line-height: 1.55;
+}
+
+.markdown-message .md-table th,
+.markdown-message .md-table td {
+  padding: 10px 12px;
+  border-right: 1px solid color-mix(in srgb, var(--accent) 13%, var(--border));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 13%, var(--border));
+  vertical-align: top;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.markdown-message .md-table th:last-child,
+.markdown-message .md-table td:last-child {
+  border-right: 0;
+}
+
+.markdown-message .md-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.markdown-message .md-table th {
+  background: color-mix(in srgb, var(--accent-soft) 68%, var(--surface));
+  color: var(--accent);
+  font-weight: 750;
+  text-align: left;
+}
+
+.markdown-message .md-table tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--surface-subtle) 64%, transparent);
+}
+
+.markdown-message .md-table-cell.align-center {
+  text-align: center;
+}
+
+.markdown-message .md-table-cell.align-right {
+  text-align: right;
 }
 
 .message-feedback {

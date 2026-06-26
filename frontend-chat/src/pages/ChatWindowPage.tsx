@@ -208,6 +208,108 @@ function renderInlineLines(lines: string[], keyPrefix: string): ReactNode[] {
   });
 }
 
+type MarkdownTableAlign = 'left' | 'center' | 'right';
+
+function splitMarkdownTableRow(row: string): string[] {
+  let text = row.trim();
+  if (text.startsWith('|')) text = text.slice(1);
+  if (text.endsWith('|')) text = text.slice(0, -1);
+
+  const cells: string[] = [];
+  let current = '';
+  let inCode = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '`') {
+      inCode = !inCode;
+      current += char;
+      continue;
+    }
+    if (char === '\\' && text[index + 1] === '|') {
+      current += '|';
+      index += 1;
+      continue;
+    }
+    if (char === '|' && !inCode) {
+      cells.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function isMarkdownTableSeparator(line: string): boolean {
+  const cells = splitMarkdownTableRow(line);
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, '')));
+}
+
+function markdownTableAlign(separatorCell: string): MarkdownTableAlign {
+  const normalized = separatorCell.replace(/\s+/g, '');
+  if (normalized.startsWith(':') && normalized.endsWith(':')) return 'center';
+  if (normalized.endsWith(':')) return 'right';
+  return 'left';
+}
+
+function isMarkdownTableStart(lines: string[], index: number): boolean {
+  if (index + 1 >= lines.length) return false;
+  const header = lines[index].trim();
+  if (!header.includes('|')) return false;
+  return splitMarkdownTableRow(header).length >= 2 && isMarkdownTableSeparator(lines[index + 1]);
+}
+
+function renderMarkdownTable(lines: string[], startIndex: number, key: string): { node: ReactNode; nextIndex: number } {
+  const header = splitMarkdownTableRow(lines[startIndex]);
+  const separator = splitMarkdownTableRow(lines[startIndex + 1]);
+  const aligns = separator.map(markdownTableAlign);
+  const rows: string[][] = [];
+  let index = startIndex + 2;
+
+  while (index < lines.length) {
+    const row = lines[index].trim();
+    if (!row || !row.includes('|') || isMarkdownTableSeparator(row)) break;
+    const cells = splitMarkdownTableRow(row);
+    if (cells.length < 2) break;
+    rows.push(cells);
+    index += 1;
+  }
+
+  const columnCount = Math.max(header.length, separator.length, ...rows.map((row) => row.length));
+  const cellClassName = (cellIndex: number) => `md-table-cell align-${aligns[cellIndex] || 'left'}`;
+  const renderCells = (cells: string[], rowKey: string) =>
+    Array.from({ length: columnCount }, (_, cellIndex) => (
+      <td key={`${rowKey}-${cellIndex}`} className={cellClassName(cellIndex)}>
+        {renderInlineMarkdown(cells[cellIndex] || '', `${rowKey}-${cellIndex}`)}
+      </td>
+    ));
+
+  return {
+    nextIndex: index,
+    node: (
+      <div key={key} className="md-table-scroll">
+        <table className="md-table">
+          <thead>
+            <tr>
+              {Array.from({ length: columnCount }, (_, cellIndex) => (
+                <th key={`${key}-head-${cellIndex}`} className={cellClassName(cellIndex)}>
+                  {renderInlineMarkdown(header[cellIndex] || '', `${key}-head-${cellIndex}`)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIndex) => (
+              <tr key={`${key}-row-${rowIndex}`}>{renderCells(row, `${key}-row-${rowIndex}`)}</tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    ),
+  };
+}
+
 function isBlockBoundary(line: string): boolean {
   const trimmed = line.trim();
   return (
@@ -259,6 +361,14 @@ function renderMarkdownBlocks(content: string): ReactNode[] {
       continue;
     }
 
+    if (isMarkdownTableStart(lines, index)) {
+      const table = renderMarkdownTable(lines, index, key);
+      blocks.push(table.node);
+      index = table.nextIndex;
+      blockIndex += 1;
+      continue;
+    }
+
     if (/^[-*]\s+/.test(trimmed)) {
       const items: string[] = [];
       while (index < lines.length && /^[-*]\s+/.test(lines[index].trim())) {
@@ -294,7 +404,7 @@ function renderMarkdownBlocks(content: string): ReactNode[] {
     }
 
     const paragraphLines: string[] = [];
-    while (index < lines.length && lines[index].trim() && !isBlockBoundary(lines[index])) {
+    while (index < lines.length && lines[index].trim() && !isBlockBoundary(lines[index]) && !isMarkdownTableStart(lines, index)) {
       paragraphLines.push(lines[index]);
       index += 1;
     }
