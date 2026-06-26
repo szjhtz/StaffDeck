@@ -5474,8 +5474,10 @@ body.skill-distill-fixed .content {
   flex: 1 1 auto;
   height: auto;
   min-height: 0;
+  max-height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-right: clamp(6px, 1vw, 14px);
   scrollbar-gutter: stable;
 }
@@ -5640,8 +5642,7 @@ body.skill-distill-fixed .content {
 textarea.skill-source-edit-input.ant-input,
 .skill-source-edit-input textarea.ant-input {
   resize: none;
-  overflow-y: auto !important;
-  scrollbar-width: thin;
+  overflow-y: hidden !important;
 }
 
 .skill-source-readonly-value {
@@ -7168,7 +7169,8 @@ pre {
   }
 
   .skill-distill-page .skill-source-card {
-    min-height: min(680px, calc(100vh - 120px));
+    height: min(760px, calc(100vh - 120px));
+    min-height: min(560px, calc(100vh - 120px));
   }
 
   .skill-distill-page .skill-chat-card .ant-card-body,
@@ -7185,7 +7187,8 @@ pre {
 
   .skill-source-md,
   .skill-flow {
-    height: calc(100% - 86px);
+    flex: 1 1 auto;
+    height: auto;
     min-height: 0;
   }
 
