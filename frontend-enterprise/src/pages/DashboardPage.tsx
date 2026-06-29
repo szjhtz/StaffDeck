@@ -32,6 +32,10 @@ import type {
 } from '../types';
 
 const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
+const HEATMAP_ROWS = 4;
+const HEATMAP_COLUMNS = 33;
+const HEATMAP_BUCKETS = HEATMAP_ROWS * HEATMAP_COLUMNS;
+
 type ReplyStats = {
   total: number;
   today: number;
@@ -494,15 +498,16 @@ function ConversationHeatmap({ byDay }: { byDay: Record<string, number> }) {
       <div className="employee-heatmap-body">
         <div className="employee-heatmap-weekdays">
           <span>周一</span>
+          <span>周二</span>
           <span>周三</span>
-          <span>周五</span>
+          <span>周四</span>
         </div>
         <div className="employee-heatmap-grid">
           {days.map((day) => (
             <span
               key={day.key}
               className={`employee-heatmap-cell level-${Math.min(4, day.count)}`}
-              title={`${day.key}: ${day.count} 轮对话`}
+              title={`${day.label}: ${day.count} 轮对话`}
             />
           ))}
         </div>
@@ -519,14 +524,28 @@ function ConversationHeatmap({ byDay }: { byDay: Record<string, number> }) {
 function heatmapDays(byDay: Record<string, number>) {
   const today = new Date();
   const start = new Date(today);
-  start.setDate(today.getDate() - 7 * 52);
-  const weekDay = (start.getDay() + 6) % 7;
-  start.setDate(start.getDate() - weekDay);
-  return Array.from({ length: 7 * 53 }, (_, index) => {
-    const day = new Date(start);
-    day.setDate(start.getDate() + index);
-    const key = dateKey(day);
-    return { key, date: day, count: byDay[key] || 0 };
+  start.setDate(today.getDate() - 365);
+  return Array.from({ length: HEATMAP_BUCKETS }, (_, index) => {
+    const startOffset = Math.floor((index * 365) / HEATMAP_BUCKETS);
+    const endOffset = Math.max(startOffset, Math.floor(((index + 1) * 365) / HEATMAP_BUCKETS) - 1);
+    const bucketStart = new Date(start);
+    bucketStart.setDate(start.getDate() + startOffset);
+    const bucketEnd = new Date(start);
+    bucketEnd.setDate(start.getDate() + endOffset);
+    let count = 0;
+    for (let offset = startOffset; offset <= endOffset; offset += 1) {
+      const day = new Date(start);
+      day.setDate(start.getDate() + offset);
+      count += byDay[dateKey(day)] || 0;
+    }
+    const startKey = dateKey(bucketStart);
+    const endKey = dateKey(bucketEnd);
+    return {
+      key: `${startKey}-${endKey}`,
+      label: startKey === endKey ? startKey : `${startKey} 至 ${endKey}`,
+      date: bucketStart,
+      count,
+    };
   });
 }
 
@@ -535,13 +554,13 @@ function monthLabels(days: ReturnType<typeof heatmapDays>) {
   let last = '';
   days.forEach((day, index) => {
     const label = `${day.date.getMonth() + 1}月`;
-    if (label !== last && day.date.getDate() <= 7) {
-      labels.push({ label, offset: Math.floor(index / 7), span: 1 });
+    if (label !== last) {
+      labels.push({ label, offset: Math.floor(index / HEATMAP_ROWS), span: 1 });
       last = label;
     }
   });
   return labels.map((item, index) => {
-    const nextOffset = labels[index + 1]?.offset ?? 53;
+    const nextOffset = labels[index + 1]?.offset ?? HEATMAP_COLUMNS;
     return { ...item, span: Math.max(2, nextOffset - item.offset) };
   });
 }
