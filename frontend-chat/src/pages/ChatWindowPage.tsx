@@ -3039,7 +3039,7 @@ export default function ChatWindowPage() {
                   <div className={`message-row ${item.role} ${item.isError ? 'error' : ''}`}>
                     <div className={`bubble ${showInlineTrace ? 'has-trace' : ''}${runningStatusOnly ? ' status-only' : ''}`}>
                       {runningStatusOnly ? (
-                        <div className="assistant-running-status">正在执行</div>
+                        <div className="assistant-running-status">正在执行...</div>
                       ) : showInlineTrace && summary && (
                         <div className="assistant-trace">
                           <button
