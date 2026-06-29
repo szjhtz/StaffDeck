@@ -12801,10 +12801,22 @@ body,
   display: block;
 }
 
+.sd1-agents-page .employee-roster-head::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  top: 34px;
+  height: 64px;
+  border-radius: 16px;
+  background: #f8f8f9;
+}
+
 .sd1-agents-page .employee-roster-head > .employee-avatar {
   position: absolute;
   left: 0;
   top: 0;
+  z-index: 1;
   width: 80px !important;
   height: 94px !important;
   overflow: visible !important;
@@ -12823,6 +12835,7 @@ body,
   position: absolute;
   left: 90px;
   top: 39px;
+  z-index: 1;
   width: 118px;
   display: grid;
   gap: 4px;
@@ -12846,6 +12859,7 @@ body,
   position: absolute;
   right: 28px;
   top: 52px;
+  z-index: 1;
   width: 28px !important;
   height: 28px !important;
   min-width: 28px !important;
@@ -12858,10 +12872,16 @@ body,
   background: #f8f9fb !important;
 }
 
+.sd1-agents-page .employee-roster-card.is-active .employee-roster-chat.ant-btn {
+  color: #ffffff !important;
+  background: #202226 !important;
+}
+
 .sd1-agents-page .employee-roster-head .ant-dropdown-trigger.ant-btn {
   position: absolute;
   right: -2px;
   top: -2px;
+  z-index: 1;
   width: 28px !important;
   height: 28px !important;
   min-width: 28px !important;
@@ -13682,8 +13702,8 @@ body:has(.sd1-scheduled-page) .topbar {
 /* SD1 follow-up: selected cards and dark theme must stay coherent after late overrides. */
 .sd1-agents-page .employee-roster-card.ant-card:hover,
 .sd1-agents-page .employee-roster-card.is-active.ant-card {
-  border-color: #dfe4ec !important;
-  box-shadow: 0 26px 42px rgba(21, 26, 38, 0.1) !important;
+  border-color: #eef1f5 !important;
+  box-shadow: 0 16px 34px rgba(21, 26, 38, 0.055) !important;
   transform: none !important;
 }
 
@@ -13692,13 +13712,13 @@ body:has(.sd1-scheduled-page) .topbar {
 }
 
 .sd1-agents-page .employee-roster-stats {
-  bottom: 8px;
-  height: 66px;
+  bottom: 4px;
+  height: 69px;
   overflow: hidden;
 }
 
 .sd1-agents-page .employee-roster-stats span {
-  padding: 7px 20px;
+  padding: 8px 20px;
 }
 
 :root[data-theme='dark'] body,
@@ -13800,8 +13820,8 @@ body:has(.sd1-scheduled-page) .topbar {
 }
 
 :root[data-theme='dark'] .sd1-agents-page .employee-roster-card.is-active.ant-card {
-  border-color: #536078 !important;
-  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.28) !important;
+  border-color: #2b3445 !important;
+  box-shadow: none !important;
 }
 
 :root[data-theme='dark'] .sd1-agents-page .employee-roster-chat.ant-btn,
@@ -13811,11 +13831,20 @@ body:has(.sd1-scheduled-page) .topbar {
   border-color: transparent !important;
 }
 
+:root[data-theme='dark'] .sd1-agents-page .employee-roster-card.is-active .employee-roster-chat.ant-btn {
+  color: #111827 !important;
+  background: #f0f2f6 !important;
+}
+
 :root[data-theme='dark'] .sd1-agents-page .employee-roster-head,
 :root[data-theme='dark'] .sd1-agents-page .employee-roster-stats,
 :root[data-theme='dark'] .sd1-agents-page .employee-roster-tags .ant-tag {
   color: #c5ccd8 !important;
   border-color: #2b3445 !important;
+  background: #182131 !important;
+}
+
+:root[data-theme='dark'] .sd1-agents-page .employee-roster-head::before {
   background: #182131 !important;
 }
 

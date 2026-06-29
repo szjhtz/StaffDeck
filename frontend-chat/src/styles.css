@@ -5653,7 +5653,7 @@ body,
   }
 }
 
-/* SD1 follow-up: running state belongs with the composer, not above the message. */
+/* SD1 keeps assistant artwork out of message bubbles; the compact avatar sits on the composer edge. */
 .message-assistant-avatar {
   display: none !important;
 }
