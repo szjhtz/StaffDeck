@@ -2732,7 +2732,7 @@ export default function ChatWindowPage() {
         <div className="sidebar-head">
           <Button
             className="icon-button"
-            icon={<StaffdeckIcon name={sidebarCollapsed ? 'sidebar-open' : 'sidebar-close'} />}
+            icon={<StaffdeckIcon name="calculator" style={{ transform: 'rotate(-90deg)' }} />}
             aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'}
             onClick={toggleSidebar}
           />

@@ -3,6 +3,7 @@ import type { CSSProperties } from 'react';
 export type StaffdeckIconName =
   | 'arrow'
   | 'branch'
+  | 'calculator'
   | 'calendar'
   | 'chat'
   | 'check'
@@ -59,6 +60,7 @@ type StaffdeckIconProps = {
 const iconPaths: Record<StaffdeckIconName, string[]> = {
   arrow: ['M9 5l6 7-6 7'],
   branch: ['M7 5v5a4 4 0 0 0 4 4h6', 'M7 5a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z', 'M17 16a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z', 'M7 23a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z', 'M7 19v-9'],
+  calculator: [],
   calendar: ['M7 3v4', 'M17 3v4', 'M4 8h16', 'M5 5h14v15H5V5Z', 'M8 12h.1', 'M12 12h.1', 'M16 12h.1'],
   chat: ['M6 7.5h12a2.5 2.5 0 0 1 2.5 2.5v4.5A2.5 2.5 0 0 1 18 17H11l-4.5 3v-3H6A2.5 2.5 0 0 1 3.5 14.5V10A2.5 2.5 0 0 1 6 7.5Z', 'M8 11.2h7.5', 'M8 14h4.5'],
   check: ['M5 12.5l4 4L19 6.5'],
@@ -107,6 +109,33 @@ const iconPaths: Record<StaffdeckIconName, string[]> = {
 };
 
 export default function StaffdeckIcon({ name, className = '', size = 18, style }: StaffdeckIconProps) {
+  if (name === 'calculator') {
+    return (
+      <svg
+        className={`sd1-icon sd1-icon-${name} ${className}`.trim()}
+        width={size}
+        height={size}
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+        focusable="false"
+        style={style}
+      >
+        <g transform="translate(2.4 1.2) scale(1.5)" fill="currentColor" stroke="none">
+          <path
+            fillRule="evenodd"
+            clipRule="evenodd"
+            d="M0 1.2C0 .537258.537258 0 1.2 0h10.4c.6627 0 1.2.537258 1.2 1.2v12c0 .6627-.5373 1.2-1.2 1.2H1.2c-.662742 0-1.2-.5373-1.2-1.2v-12ZM1.2.8c-.220914 0-.4.179086-.4.4v3.6H12V1.2c0-.220914-.1791-.4-.4-.4H1.2ZM12 5.6H.8v7.6c0 .2209.179086.4.4.4h10.4c.2209 0 .4-.1791.4-.4V5.6Z"
+          />
+          <path d="M4 7.2H2.4v1.6H4V7.2Z" />
+          <path d="M7.2 7.2H5.6v1.6h1.6V7.2Z" />
+          <path d="M10.4 7.2H8.8V12h1.6V7.2Z" />
+          <path d="M4 10.4H2.4V12H4v-1.6Z" />
+          <path d="M7.2 10.4H5.6V12h1.6v-1.6Z" />
+        </g>
+      </svg>
+    );
+  }
+
   return (
     <svg
       className={`sd1-icon sd1-icon-${name} ${className}`.trim()}
