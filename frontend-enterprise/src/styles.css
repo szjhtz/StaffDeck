@@ -11895,12 +11895,15 @@ body,
   top: 153px;
   width: 184px;
   display: flex;
-  gap: 14px;
+  gap: 16px;
 }
 
 .employee-avatar-actions .ant-btn {
+  min-width: 0 !important;
   height: 36px;
-  padding: 0 14px !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  justify-content: center !important;
   border: 1px solid #eef1f5 !important;
   border-radius: 18px !important;
   color: #8b94a8 !important;
@@ -11908,6 +11911,14 @@ body,
   box-shadow: 0 10px 22px rgba(21, 26, 38, 0.08) !important;
   font-size: 12px;
   font-weight: 700;
+}
+
+.employee-avatar-actions .ant-btn:first-child {
+  width: 78px !important;
+}
+
+.employee-avatar-actions .ant-btn:nth-child(2) {
+  width: 90px !important;
 }
 
 .employee-home-main {
