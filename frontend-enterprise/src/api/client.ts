@@ -158,11 +158,7 @@ function parseErrorMessage(text: string): string {
     if (typeof detail === 'string') return detail;
     if (Array.isArray(detail)) {
       return detail
-        .map((item) => {
-          if (typeof item === 'string') return item;
-          if (item && typeof item === 'object' && 'msg' in item) return String((item as { msg: unknown }).msg);
-          return '';
-        })
+        .map(formatValidationDetail)
         .filter(Boolean)
         .join('；');
     }
@@ -170,4 +166,18 @@ function parseErrorMessage(text: string): string {
     return text;
   }
   return text;
+}
+
+function formatValidationDetail(item: unknown): string {
+  if (typeof item === 'string') return item;
+  if (!item || typeof item !== 'object') return '';
+
+  const detail = item as { loc?: unknown; msg?: unknown };
+  const message = typeof detail.msg === 'string' ? detail.msg : '';
+  const location = Array.isArray(detail.loc)
+    ? detail.loc.map((part) => String(part)).filter(Boolean).join('.')
+    : '';
+
+  if (location && message) return `${location}: ${message}`;
+  return message;
 }
