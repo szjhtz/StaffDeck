@@ -6446,7 +6446,8 @@ body,
   .employee-gallery-tabs {
     width: 100% !important;
     max-width: 100% !important;
-    height: auto !important;
+    height: 31px !important;
+    min-height: 31px !important;
     overflow-x: auto !important;
     scrollbar-width: none;
   }
