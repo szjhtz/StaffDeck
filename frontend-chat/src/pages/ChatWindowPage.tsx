@@ -1169,6 +1169,7 @@ export default function ChatWindowPage() {
   const [showHandoffInbox, setShowHandoffInbox] = useState(false);
   const [handoffReplies, setHandoffReplies] = useState<Record<string, string>>({});
   const [isComposing, setIsComposing] = useState(false);
+  const [runningTurn, setRunningTurn] = useState<{ sessionId: string; turnId: string } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => (
     window.localStorage.getItem('skill_agent_sidebar_collapsed') === 'true'
   ));
@@ -1199,19 +1200,10 @@ export default function ChatWindowPage() {
   const keepRunningStatusInMessageArea = useCallback(() => {
     const element = chatMessagesRef.current;
     if (!element) return false;
-    const status = element.querySelector<HTMLElement>('.message-item.assistant.status-only-item');
+    const status = element.querySelector<HTMLElement>('.message-item.status-only-item');
     if (!status) return false;
-    const elementRect = element.getBoundingClientRect();
-    const statusRect = status.getBoundingClientRect();
-    const maxStatusTop = elementRect.top + Math.min(369, Math.max(180, element.clientHeight * 0.54));
-    const minStatusTop = elementRect.top + Math.max(160, element.clientHeight * 0.26);
-    if (statusRect.top < minStatusTop) {
-      element.scrollTop = Math.max(0, element.scrollTop - (minStatusTop - statusRect.top));
-      return true;
-    }
-    if (statusRect.top > maxStatusTop) {
-      element.scrollTop = Math.max(0, element.scrollTop + statusRect.top - maxStatusTop);
-      return true;
+    if (element.scrollTop !== 0) {
+      element.scrollTop = 0;
     }
     return true;
   }, []);
@@ -1499,7 +1491,16 @@ export default function ChatWindowPage() {
     void streamTick;
     return sessionId ? getStreamSlot(sessionId) : createStreamSlot();
   }, [getStreamSlot, sessionId, streamTick]);
-  const composerActive = Boolean(input.trim() || displayedMessages.length > 0 || currentStream.loading);
+  const currentSessionRunning = Boolean(currentStream.loading || (sessionId && runningTurn?.sessionId === sessionId));
+  const hasStreamingStatusPlaceholder = useMemo(() => (
+    displayedMessages.some((item) => (
+      item.role === 'assistant'
+      && item.isStreaming
+      && !staffdeckDisplayText(stripTrailingCitationSummary(item.content))
+    ))
+  ), [displayedMessages]);
+  const showFallbackRunningStatus = currentSessionRunning && !hasStreamingStatusPlaceholder;
+  const composerActive = Boolean(input.trim() || displayedMessages.length > 0 || currentSessionRunning);
   const showComposerAvatar = Boolean(sessionId && displayedProfile && composerActive);
   const modelMenuItems = useMemo(() => {
     if (!enabledModelConfigs.length) {
@@ -1884,6 +1885,8 @@ export default function ChatWindowPage() {
       notifyTrace();
     }
     finalizeStreaming(sessionId);
+    const slot = getSlot(sessionId);
+    slot.realtimeMessages = slot.realtimeMessages.filter((item) => !item.id.startsWith('local_interrupt_'));
     appendRealtime(sessionId, {
       id: `local_interrupt_${Date.now()}`,
       role: 'system',
@@ -1893,6 +1896,7 @@ export default function ChatWindowPage() {
     const nextStream = createStreamSlot();
     nextStream.cancelledTurnId = cancelledTurnId;
     streamRef.current.set(sessionId, nextStream);
+    setRunningTurn((current) => (current?.sessionId === sessionId ? null : current));
     notifyStream();
   }
 
@@ -2502,6 +2506,7 @@ export default function ChatWindowPage() {
     updateStreaming(currentSessionId, '', turnId);
     stream.loading = true;
     stream.phase = '正在思考';
+    setRunningTurn({ sessionId: currentSessionId, turnId });
     notifyStream();
 
     const controller = new AbortController();
@@ -2763,6 +2768,9 @@ export default function ChatWindowPage() {
           eventStream.loading = false;
           eventStream.phase = '';
           eventStream.abortController = null;
+          setRunningTurn((current) => (
+            current?.sessionId === eventSessionId && current.turnId === turnId ? null : current
+          ));
           notifyStream();
           return;
         }
@@ -2786,6 +2794,9 @@ export default function ChatWindowPage() {
           eventStream.loading = false;
           eventStream.phase = '';
           eventStream.abortController = null;
+          setRunningTurn((current) => (
+            current?.sessionId === eventSessionId && current.turnId === turnId ? null : current
+          ));
           notifyStream();
           loadSessions();
           window.setTimeout(() => {
@@ -2804,6 +2815,9 @@ export default function ChatWindowPage() {
         finishTrace(turnId, true);
         stream.loading = false;
         stream.phase = '';
+        setRunningTurn((current) => (
+          current?.sessionId === currentSessionId && current.turnId === turnId ? null : current
+        ));
         notifyStream();
         return;
       }
@@ -2818,12 +2832,18 @@ export default function ChatWindowPage() {
       finishTrace(turnId, true);
       stream.loading = false;
       stream.phase = '';
+      setRunningTurn((current) => (
+        current?.sessionId === currentSessionId && current.turnId === turnId ? null : current
+      ));
       notifyStream();
     } finally {
       if (stream.abortController === controller) {
         stream.abortController = null;
         stream.loading = false;
         stream.phase = '';
+        setRunningTurn((current) => (
+          current?.sessionId === currentSessionId && current.turnId === turnId ? null : current
+        ));
         notifyStream();
       }
     }
@@ -3046,11 +3066,19 @@ export default function ChatWindowPage() {
                 streamingWithoutContent
                 && (!summary || summary.state === 'running')
               );
-              const showInlineTrace = Boolean(summary && !runningStatusOnly);
+              const stoppedStatusOnly = Boolean(
+                item.role === 'system'
+                && item.id.startsWith('local_interrupt_')
+                && visibleContent === '已停止生成'
+              );
+              const statusOnly = runningStatusOnly || stoppedStatusOnly;
+              const statusOnlyText = runningStatusOnly ? '正在执行...' : visibleContent;
+              const showInlineTrace = Boolean(summary && !statusOnly);
               if (
                 item.role === 'assistant'
                 && !visibleContent
                 && !showInlineTrace
+                && !statusOnly
                 && !scheduledDraft
                 && !persistedCreatedTask
                 && citations.length === 0
@@ -3059,11 +3087,11 @@ export default function ChatWindowPage() {
               }
               void traceTick;
               return (
-                <div key={item.id} className={`message-item ${item.role}${runningStatusOnly ? ' status-only-item' : ''}`}>
+                <div key={item.id} className={`message-item ${item.role}${statusOnly ? ' status-only-item' : ''}`}>
                   <div className={`message-row ${item.role} ${item.isError ? 'error' : ''}`}>
-                    <div className={`bubble ${showInlineTrace ? 'has-trace' : ''}${runningStatusOnly ? ' status-only' : ''}`}>
-                      {runningStatusOnly ? (
-                        <div className="assistant-running-status">正在执行...</div>
+                    <div className={`bubble ${showInlineTrace ? 'has-trace' : ''}${statusOnly ? ' status-only' : ''}`}>
+                      {statusOnly ? (
+                        <div className="assistant-running-status">{statusOnlyText}</div>
                       ) : showInlineTrace && summary && (
                         <div className="assistant-trace">
                           <button
@@ -3118,7 +3146,7 @@ export default function ChatWindowPage() {
                           )}
                         </div>
                       )}
-                      {visibleContent ? (
+                      {!statusOnly && visibleContent ? (
                         item.role === 'assistant' ? (
                           <MarkdownMessage content={visibleContent} />
                         ) : (
@@ -3189,6 +3217,15 @@ export default function ChatWindowPage() {
                 </div>
               );
             })}
+            {showFallbackRunningStatus && (
+              <div className="message-item assistant status-only-item">
+                <div className="message-row assistant">
+                  <div className="bubble status-only">
+                    <div className="assistant-running-status">正在执行...</div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           {currentScheduledDraft && !hasVisibleMessageScheduledDraft && (
             <ScheduledDraftCard
@@ -3250,7 +3287,7 @@ export default function ChatWindowPage() {
                     htmlType="button"
                     className="composer-plus-button"
                     icon={<StaffdeckIcon name="plus" />}
-                    disabled={currentStream.loading}
+                    disabled={currentSessionRunning}
                     aria-label="添加对话项目"
                   />
                 </Dropdown>
@@ -3285,7 +3322,7 @@ export default function ChatWindowPage() {
                     type="text"
                     htmlType="button"
                     className="composer-model-button"
-                    disabled={currentStream.loading || !enabledModelConfigs.length}
+                    disabled={currentSessionRunning || !enabledModelConfigs.length}
                   >
                     <span className="composer-model-label">
                       {selectedModelConfig ? modelDisplayName(selectedModelConfig) : '默认模型'}
@@ -3295,11 +3332,11 @@ export default function ChatWindowPage() {
                 </Dropdown>
                 <Button
                   type="primary"
-                  htmlType={currentStream.loading ? 'button' : 'submit'}
-                  icon={<StaffdeckIcon name={currentStream.loading ? 'stop' : 'send'} />}
-                  onClick={currentStream.loading ? abortStream : undefined}
-                  className={`composer-send-button${currentStream.loading ? ' stop-button' : ''}`}
-                  aria-label={currentStream.loading ? '停止生成' : '发送'}
+                  htmlType={currentSessionRunning ? 'button' : 'submit'}
+                  icon={<StaffdeckIcon name={currentSessionRunning ? 'stop' : 'send'} />}
+                  onClick={currentSessionRunning ? abortStream : undefined}
+                  className={`composer-send-button${currentSessionRunning ? ' stop-button' : ''}`}
+                  aria-label={currentSessionRunning ? '停止生成' : '发送'}
                 />
               </div>
             </div>
