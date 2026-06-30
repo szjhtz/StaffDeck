@@ -12345,8 +12345,8 @@ body,
   display: grid;
   place-items: center;
   border-radius: 999px;
-  color: #18181a;
-  background: #18181a;
+  color: #18181a !important;
+  background: #18181a !important;
   box-shadow: 0 0 0 4px #ffffff;
 }
 
