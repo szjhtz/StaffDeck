@@ -14659,6 +14659,64 @@ body:has(.sd1-scheduled-page) .topbar {
     width: 40px !important;
     margin: 4px 0 3px !important;
   }
+
+  .sd1-sidebar.is-expanded .sd1-rail-agent:not(.is-empty) {
+    position: relative !important;
+    width: 32px !important;
+    min-width: 32px !important;
+    max-width: 32px !important;
+    height: auto !important;
+    min-height: 51px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: grid !important;
+    justify-items: center !important;
+    gap: 2px !important;
+    background: transparent !important;
+    overflow: hidden !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-agent:not(.is-empty) .employee-avatar {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: 32px !important;
+    height: 38px !important;
+    transform: none !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-agent:not(.is-empty) .employee-avatar img {
+    width: 36px !important;
+    height: 42px !important;
+    transform: translate(-2px, -4px) !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-agent:not(.is-empty) .sd1-rail-agent-label {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: auto !important;
+    height: auto !important;
+    min-width: 0 !important;
+    display: grid !important;
+    justify-items: center !important;
+    text-align: center !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-agent:not(.is-empty) .sd1-rail-agent-short {
+    display: block !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-agent:not(.is-empty) .sd1-rail-agent-name,
+  .sd1-sidebar.is-expanded .sd1-rail-agent:not(.is-empty) .sd1-rail-agent-role,
+  .sd1-sidebar.is-expanded .sd1-rail-agent:not(.is-empty) .sd1-rail-agent-chevron {
+    display: none !important;
+  }
+
+  .sd1-sidebar.is-expanded .sd1-rail-agent:not(.is-empty) + .sd1-rail-divider {
+    width: 40px !important;
+    margin: 4px 0 3px !important;
+  }
 }
 
 :root[data-theme='dark'] .employee-capability-card.is-dark .employee-capability-head,
