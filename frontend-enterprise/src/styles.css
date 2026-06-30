@@ -14840,3 +14840,83 @@ body:has(.sd1-scheduled-page) .topbar {
     min-width: 0;
   }
 }
+
+/* SD1 responsive hardening: keep management pages inside the current content column. */
+.scheduled-task-list-card .ant-table-wrapper,
+.scheduled-task-list-card .ant-spin-nested-loading,
+.scheduled-task-list-card .ant-spin-container,
+.scheduled-task-list-card .ant-table,
+.scheduled-task-list-card .ant-table-container {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.scheduled-task-desktop-table .ant-table {
+  width: 100% !important;
+  min-width: 0 !important;
+  table-layout: fixed;
+}
+
+@media (max-width: 760px) {
+  .content {
+    min-width: 0 !important;
+    padding-right: 14px !important;
+    padding-left: 14px !important;
+    overflow-x: hidden !important;
+  }
+
+  .page,
+  .grid-2,
+  .page-title {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .page-title {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    align-items: start !important;
+    gap: 12px !important;
+  }
+
+  .page-title > div,
+  .page-title > .ant-space {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .page-title h1,
+  .page-title h2,
+  .page-title h3,
+  .page-title h4,
+  .page-title .ant-typography {
+    width: auto !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    word-break: normal !important;
+  }
+
+  .page-title > .ant-space {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: flex-start !important;
+  }
+
+  .sd1-scheduled-page {
+    padding: 62px 14px 32px !important;
+  }
+
+  .sd1-scheduled-page .page-title {
+    padding-right: 0 !important;
+  }
+
+  .sd1-scheduled-page .page-title .ant-typography-secondary {
+    font-size: 16px !important;
+    line-height: 23px !important;
+  }
+}
