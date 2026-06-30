@@ -9,6 +9,7 @@ from app.api.chat import _active_skill_context_for_assistant_message, _active_sk
 from app.api.skills import (
     _extract_uploaded_skill_file,
     _skill_stats,
+    distill_skill,
     list_skill_versions,
     list_skills,
     rollback_skill_version,
@@ -20,7 +21,7 @@ from app.skills.skill_distiller import SkillDistiller
 from app.skills.skill_editor import SkillEditor
 from app.skills.skill_reflection import PROMPT_PATH as SKILL_REFLECTION_PROMPT_PATH
 from app.skills.skill_reflection import RUBRIC_LABELS
-from app.skills.skill_schema import SkillCard, SkillDistillRequest, SkillRewriteRequest
+from app.skills.skill_schema import SkillCard, SkillDistillRequest, SkillDistillResponse, SkillRewriteRequest
 from app.security.encryption import encrypt_secret
 
 
@@ -1287,6 +1288,51 @@ def test_skill_distiller_stream_uses_staged_generation_after_repair_failure(monk
     assert "模型修复失败，改用分段生成" in status_texts
     assert any("扩写步骤 1" in instruction for instruction in instructions)
     assert any("扩写步骤 2" in instruction for instruction in instructions)
+
+
+def test_distill_skill_uses_selected_model_config(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_distill(self, request, model_config):  # noqa: ANN001
+        captured["model_id"] = model_config.id
+        return SkillDistillResponse(draft_skill=_skill_card())
+
+    monkeypatch.setattr("app.api.skills.SkillDistiller.distill", fake_distill)
+
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.add(
+            ModelConfig(
+                id="model_default",
+                tenant_id="tenant_demo",
+                name="默认模型",
+                api_key_encrypted="",
+                model="default-model",
+                is_default=True,
+            )
+        )
+        db.add(
+            ModelConfig(
+                id="model_selected",
+                tenant_id="tenant_demo",
+                name="选择模型",
+                api_key_encrypted="",
+                model="selected-model",
+            )
+        )
+        db.commit()
+
+        distill_skill(
+            SkillDistillRequest(
+                tenant_id="tenant_demo",
+                title="测试 SOP",
+                raw_content="用户说 hello 时回复 hi",
+                model_config_id="model_selected",
+            ),
+            db=db,
+        )
+
+    assert captured["model_id"] == "model_selected"
 
 
 def test_extract_uploaded_skill_file_reads_docx_text() -> None:

@@ -215,6 +215,7 @@ class SkillDistillRequest(BaseModel):
     title: str
     raw_content: str
     business_domain: Optional[str] = None
+    model_config_id: Optional[str] = None
     available_tools: list[dict[str, Any]] = Field(default_factory=list)
 
 

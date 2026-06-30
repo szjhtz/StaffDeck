@@ -551,7 +551,7 @@ export default function DistillPage({ active = true, searchParamsOverride }: Dis
     try {
       await streamPost(
         '/api/enterprise/skills/distill/stream',
-        { tenant_id: TENANT_ID, ...payload },
+        { tenant_id: TENANT_ID, ...payload, model_config_id: selectedRewriteModelId || undefined },
         (item) => {
           trackActiveJobEvent(item, baseJob);
           if (item.event === 'status') {

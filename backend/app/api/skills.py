@@ -525,7 +525,7 @@ def extract_skill_file(request: SkillFileExtractRequest) -> SkillFileExtractResp
 @router.post("/distill", response_model=SkillDistillResponse)
 def distill_skill(request: SkillDistillRequest, db: Session = Depends(get_session)) -> SkillDistillResponse:
     ensure_tenant(db, request.tenant_id)
-    model_config = _get_default_model(db, request.tenant_id)
+    model_config = _get_request_model(db, request.tenant_id, request.model_config_id)
     request = _with_available_tools(db, request)
     try:
         return SkillDistiller().distill(request, model_config)
@@ -641,7 +641,7 @@ def _run_distill_stream_job(job_id: str, request_data: dict[str, object]) -> Non
         request = SkillDistillRequest.model_validate(request_data)
         with Session(get_session_engine()) as db:
             ensure_tenant(db, request.tenant_id)
-            model_config = _get_default_model(db, request.tenant_id)
+            model_config = _get_request_model(db, request.tenant_id, request.model_config_id)
             enriched_request = _with_available_tools(db, request)
             stream_jobs.append(job_id, "status", {"text": "正在调用模型生成新技能"})
             for item in SkillDistiller().stream_text(enriched_request, model_config):
