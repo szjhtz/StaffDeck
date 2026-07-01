@@ -769,13 +769,17 @@ class AgentLoop:
                 before_skill = chat_session.active_skill_id
                 before_step = chat_session.active_step_id
                 self.runtime.apply_decision(chat_session, router_decision)
-                self._record_runtime_event(
-                    request.tenant_id, chat_session, before_skill, before_step, router_decision
-                )
+                state_pruned = self._drop_unavailable_skill_state(request.tenant_id, chat_session, skills)
+                if self._should_record_runtime_event_after_prune(router_decision, chat_session, skills, state_pruned):
+                    self._record_runtime_event(
+                        request.tenant_id, chat_session, before_skill, before_step, router_decision
+                    )
                 self.db.commit()
                 self.db.refresh(chat_session)
 
                 active_skill = self._get_active_skill(request.tenant_id, chat_session.active_skill_id, chat_session.agent_id)
+                if not self._should_run_step_agent(router_decision, active_skill):
+                    continue
                 yield self._stream_event(
                     "skill_state",
                     chat_session,
@@ -1015,6 +1019,7 @@ class AgentLoop:
                 chat_session.agent_id,
             )
             persona_prompt = self._get_persona_prompt(request.tenant_id, chat_session.agent_id)
+            self._drop_unavailable_skill_state(request.tenant_id, chat_session, skills)
             if not skills:
                 selected_general_skill = self._select_general_skill(request.message, model_config, chat_session.agent_id)
                 if selected_general_skill:
@@ -1139,6 +1144,7 @@ class AgentLoop:
             if initial_schedule_decision:
                 self.runtime.apply_decision(chat_session, initial_schedule_decision)
                 self._release_active_task_to_scheduler(chat_session, initial_schedule_decision)
+                self._drop_unavailable_skill_state(request.tenant_id, chat_session, skills)
                 self.events.record(
                     request.tenant_id,
                     chat_session.id,
@@ -1217,7 +1223,9 @@ class AgentLoop:
             before_skill = chat_session.active_skill_id
             before_step = chat_session.active_step_id
             self.runtime.apply_decision(chat_session, router_decision)
-            self._record_runtime_event(request.tenant_id, chat_session, before_skill, before_step, router_decision)
+            state_pruned = self._drop_unavailable_skill_state(request.tenant_id, chat_session, skills)
+            if self._should_record_runtime_event_after_prune(router_decision, chat_session, skills, state_pruned):
+                self._record_runtime_event(request.tenant_id, chat_session, before_skill, before_step, router_decision)
             self.db.commit()
             self.db.refresh(chat_session)
 
@@ -1580,6 +1588,7 @@ class AgentLoop:
         )
         if not model_config:
             raise AgentLoopPreconditionError("missing_model_config", "没有默认模型配置。")
+        self._drop_unavailable_skill_state(request.tenant_id, chat_session, skills)
         if not skills:
             router_decision = RouterDecision(
                 decision="answer_only",
@@ -1694,6 +1703,7 @@ class AgentLoop:
         if initial_schedule_decision:
             self.runtime.apply_decision(chat_session, initial_schedule_decision)
             self._release_active_task_to_scheduler(chat_session, initial_schedule_decision)
+            self._drop_unavailable_skill_state(request.tenant_id, chat_session, skills)
             self.events.record(
                 request.tenant_id,
                 chat_session.id,
@@ -1739,7 +1749,9 @@ class AgentLoop:
         before_skill = chat_session.active_skill_id
         before_step = chat_session.active_step_id
         self.runtime.apply_decision(chat_session, router_decision)
-        self._record_runtime_event(request.tenant_id, chat_session, before_skill, before_step, router_decision)
+        state_pruned = self._drop_unavailable_skill_state(request.tenant_id, chat_session, skills)
+        if self._should_record_runtime_event_after_prune(router_decision, chat_session, skills, state_pruned):
+            self._record_runtime_event(request.tenant_id, chat_session, before_skill, before_step, router_decision)
         self.db.commit()
         self.db.refresh(chat_session)
 
@@ -2290,13 +2302,17 @@ class AgentLoop:
                 before_skill = chat_session.active_skill_id
                 before_step = chat_session.active_step_id
                 self.runtime.apply_decision(chat_session, router_decision)
-                self._record_runtime_event(
-                    request.tenant_id, chat_session, before_skill, before_step, router_decision
-                )
+                state_pruned = self._drop_unavailable_skill_state(request.tenant_id, chat_session, skills)
+                if self._should_record_runtime_event_after_prune(router_decision, chat_session, skills, state_pruned):
+                    self._record_runtime_event(
+                        request.tenant_id, chat_session, before_skill, before_step, router_decision
+                    )
                 self.db.commit()
                 self.db.refresh(chat_session)
 
                 active_skill = self._get_active_skill(request.tenant_id, chat_session.active_skill_id, chat_session.agent_id)
+                if not self._should_run_step_agent(router_decision, active_skill):
+                    continue
                 step_result = self._run_step_agent_with_context_repair(
                     request,
                     chat_session,
@@ -2446,6 +2462,7 @@ class AgentLoop:
             return False
 
         self._finish_stale_completed_skill(request.tenant_id, chat_session, skills)
+        self._drop_unavailable_skill_state(request.tenant_id, chat_session, skills)
         self.db.commit()
         self.db.refresh(chat_session)
 
@@ -2980,7 +2997,9 @@ class AgentLoop:
         before_skill = chat_session.active_skill_id
         before_step = chat_session.active_step_id
         self.runtime.apply_decision(chat_session, router_decision)
-        self._record_runtime_event(request.tenant_id, chat_session, before_skill, before_step, router_decision)
+        state_pruned = self._drop_unavailable_skill_state(request.tenant_id, chat_session, skills)
+        if self._should_record_runtime_event_after_prune(router_decision, chat_session, skills, state_pruned):
+            self._record_runtime_event(request.tenant_id, chat_session, before_skill, before_step, router_decision)
         self.db.commit()
         self.db.refresh(chat_session)
 
@@ -4972,6 +4991,84 @@ class AgentLoop:
             return None
         return visible_skill(self.db, tenant_id, skill_id, agent_id)
 
+    def _drop_unavailable_skill_state(
+        self,
+        tenant_id: str,
+        chat_session: ChatSession,
+        skills: list[Skill],
+    ) -> bool:
+        available_skill_ids = {skill.skill_id for skill in skills}
+        changed = False
+        removed_skill_ids: set[str] = set()
+
+        def frame_skill_id(frame: object) -> str:
+            if not isinstance(frame, dict):
+                return ""
+            return str(frame.get("target_skill_id") or frame.get("skill_id") or "").strip()
+
+        def keep_frame(frame: object) -> bool:
+            skill_id = frame_skill_id(frame)
+            if not skill_id:
+                return True
+            if skill_id in available_skill_ids:
+                return True
+            removed_skill_ids.add(skill_id)
+            return False
+
+        active_skill_id = str(chat_session.active_skill_id or "").strip()
+        if active_skill_id and active_skill_id not in available_skill_ids:
+            removed_skill_ids.add(active_skill_id)
+            chat_session.active_skill_id = None
+            chat_session.active_step_id = None
+            chat_session.slots_json = {}
+            chat_session.awaiting_input_json = None
+            chat_session.resume_after_answer_json = None
+            changed = True
+
+        for attr in ("pending_tasks_json", "skill_stack_json"):
+            value = getattr(chat_session, attr) or []
+            if not isinstance(value, list):
+                continue
+            kept = [frame for frame in value if keep_frame(frame)]
+            if len(kept) != len(value):
+                setattr(chat_session, attr, kept)
+                changed = True
+
+        awaiting = chat_session.awaiting_input_json
+        if isinstance(awaiting, dict):
+            awaiting_skill_id = str(awaiting.get("skill_id") or "").strip()
+            if awaiting_skill_id and awaiting_skill_id not in available_skill_ids:
+                removed_skill_ids.add(awaiting_skill_id)
+                chat_session.awaiting_input_json = None
+                changed = True
+
+        if changed:
+            chat_session.updated_at = utc_now()
+            if hasattr(self, "events"):
+                self.events.record(
+                    tenant_id,
+                    chat_session.id,
+                    "skill_state_pruned",
+                    {"removed_skill_ids": sorted(removed_skill_ids)},
+                )
+        return changed
+
+    def _should_record_runtime_event_after_prune(
+        self,
+        router_decision: RouterDecision,
+        chat_session: ChatSession,
+        skills: list[Skill],
+        state_pruned: bool,
+    ) -> bool:
+        if not state_pruned:
+            return True
+        if chat_session.active_skill_id:
+            return True
+        target_skill_id = str(router_decision.target_skill_id or "").strip()
+        if not target_skill_id:
+            return True
+        return target_skill_id in {skill.skill_id for skill in skills}
+
     def _recent_messages(self, chat_session: ChatSession, limit: int = 8) -> list[dict[str, str]]:
         if not hasattr(self, "db"):
             return []
@@ -5163,24 +5260,26 @@ class AgentLoop:
         runtime_context: dict[str, object] | None = None,
     ) -> dict[str, object]:
         skill_names = {skill.skill_id: skill.name for skill in skills}
+        visible_skill_ids = set(skill_names)
         current_skills: list[dict[str, object]] = []
         for frame in chat_session.skill_stack_json or []:
-            skill_id = frame.get("skill_id")
-            if not skill_id:
+            skill_id = str(frame.get("skill_id") or "").strip()
+            if not skill_id or skill_id not in visible_skill_ids:
                 continue
             current_skills.append(
                 {
                     "skillId": skill_id,
-                    "name": skill_names.get(str(skill_id), str(skill_id)),
+                    "name": skill_names.get(skill_id, skill_id),
                     "stepId": frame.get("step_id"),
                     "state": "suspended",
                 }
             )
-        if chat_session.active_skill_id:
+        active_skill_id = chat_session.active_skill_id if chat_session.active_skill_id in visible_skill_ids else None
+        if active_skill_id:
             current_skills.append(
                 {
-                    "skillId": chat_session.active_skill_id,
-                    "name": skill_names.get(chat_session.active_skill_id, chat_session.active_skill_id),
+                    "skillId": active_skill_id,
+                    "name": skill_names.get(active_skill_id, active_skill_id),
                     "stepId": chat_session.active_step_id,
                     "state": "active",
                 }
@@ -5188,20 +5287,20 @@ class AgentLoop:
         for task in chat_session.pending_tasks_json or []:
             if not isinstance(task, dict):
                 continue
-            skill_id = task.get("target_skill_id") or task.get("skill_id")
-            if not skill_id:
+            skill_id = str(task.get("target_skill_id") or task.get("skill_id") or "").strip()
+            if not skill_id or skill_id not in visible_skill_ids:
                 continue
             current_skills.append(
                 {
                     "skillId": skill_id,
-                    "name": skill_names.get(str(skill_id), str(skill_id)),
+                    "name": skill_names.get(skill_id, skill_id),
                     "stepId": task.get("target_step_id") or task.get("step_id"),
                     "state": task.get("status") or "pending",
                 }
             )
         return {
-            "activeSkillId": chat_session.active_skill_id,
-            "activeStepId": chat_session.active_step_id,
+            "activeSkillId": active_skill_id,
+            "activeStepId": chat_session.active_step_id if active_skill_id else None,
             "currentSkills": current_skills,
             **(runtime_context or {}),
         }

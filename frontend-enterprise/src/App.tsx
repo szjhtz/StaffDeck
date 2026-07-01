@@ -147,9 +147,6 @@ function Shell({
         const selectableRows = rows.filter((item) => canUseAgentScope(item));
         setSelectedAgentId((current) => {
           if (current && selectableRows.some((item) => item.id === current)) return current;
-          const hasStoredScope = Boolean(window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY));
-          const canShowUnselectedRoster = isAdmin && location.pathname.startsWith('/enterprise/agents') && !hasStoredScope;
-          if (!current && canShowUnselectedRoster) return '';
           const ownedRows = selectableRows.filter((item) => !item.is_overall && isEmployeeOwnedBy(item, auth.user));
           const next = isAdmin
             ? selectableRows.find((item) => item.is_overall)?.id || preferredEmployeeAgent(selectableRows)?.id || ''
@@ -189,7 +186,7 @@ function Shell({
   }
 
   const selectedAgent = agents.find((item) => item.id === selectedAgentId);
-  const sidebarAgent = isAgentRosterRoute ? undefined : selectedAgent;
+  const sidebarAgent = selectedAgent;
   const scopeAgents = agents.filter(canUseAgentScope);
   const sourceAgents = isAdmin ? scopeAgents : scopeAgents.filter((item) => !item.is_overall);
   const isOverallScope = Boolean(selectedAgent?.is_overall);

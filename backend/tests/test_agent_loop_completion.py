@@ -219,6 +219,93 @@ def test_start_new_task_preserves_existing_active_frame_for_scheduler() -> None:
     assert session.pending_tasks_json[1]["source_message"] == "我想买一个A1,然后想跟A3比下价格"
 
 
+def test_drop_unavailable_skill_state_removes_disabled_sop_frames() -> None:
+    loop = object.__new__(AgentLoop)
+    loop.events = FakeEvents()
+    session = ChatSession(
+        id="session_test",
+        tenant_id="tenant_demo",
+        active_skill_id="archived_sop",
+        active_step_id="collect_info",
+        slots_json={"field": "value"},
+        awaiting_input_json={"skill_id": "archived_sop", "step_id": "collect_info"},
+        pending_tasks_json=[
+            {"task_id": "task_archived", "target_skill_id": "archived_sop"},
+            {"task_id": "task_purchase", "target_skill_id": "purchase"},
+        ],
+        skill_stack_json=[
+            {"task_id": "stack_archived", "skill_id": "archived_sop"},
+            {"task_id": "stack_purchase", "skill_id": "purchase"},
+        ],
+    )
+
+    changed = loop._drop_unavailable_skill_state("tenant_demo", session, [_purchase_skill()])
+
+    assert changed is True
+    assert session.active_skill_id is None
+    assert session.active_step_id is None
+    assert session.slots_json == {}
+    assert session.awaiting_input_json is None
+    assert session.pending_tasks_json == [{"task_id": "task_purchase", "target_skill_id": "purchase"}]
+    assert session.skill_stack_json == [{"task_id": "stack_purchase", "skill_id": "purchase"}]
+    assert loop.events.records[-1][2] == "skill_state_pruned"
+    assert loop.events.records[-1][3]["removed_skill_ids"] == ["archived_sop"]
+
+
+def test_skill_state_payload_filters_disabled_sop_frames() -> None:
+    loop = object.__new__(AgentLoop)
+    session = ChatSession(
+        id="session_test",
+        tenant_id="tenant_demo",
+        active_skill_id="archived_sop",
+        active_step_id="collect_info",
+        pending_tasks_json=[
+            {"task_id": "task_archived", "target_skill_id": "archived_sop", "target_step_id": "collect_info"},
+            {"task_id": "task_purchase", "target_skill_id": "purchase", "target_step_id": "collect_user_name"},
+        ],
+        skill_stack_json=[
+            {"task_id": "stack_archived", "skill_id": "archived_sop", "step_id": "collect_info"},
+            {"task_id": "stack_purchase", "skill_id": "purchase", "step_id": "confirm_product"},
+        ],
+    )
+
+    payload = loop._skill_state_payload(session, [_purchase_skill()])
+
+    assert payload["activeSkillId"] is None
+    assert payload["activeStepId"] is None
+    assert payload["currentSkills"] == [
+        {
+            "skillId": "purchase",
+            "name": "购买商品",
+            "stepId": "confirm_product",
+            "state": "suspended",
+        },
+        {
+            "skillId": "purchase",
+            "name": "购买商品",
+            "stepId": "collect_user_name",
+            "state": "pending",
+        },
+    ]
+
+
+def test_pruned_disabled_sop_runtime_event_is_not_recorded() -> None:
+    loop = object.__new__(AgentLoop)
+    session = ChatSession(id="session_test", tenant_id="tenant_demo")
+    decision = RouterDecision(
+        decision="switch_to_pending",
+        target_skill_id="archived_sop",
+        target_step_id="collect_info",
+    )
+
+    assert loop._should_record_runtime_event_after_prune(
+        decision,
+        session,
+        [_purchase_skill()],
+        state_pruned=True,
+    ) is False
+
+
 def test_finalize_turn_clears_stale_last_question_for_non_question_reply() -> None:
     loop = object.__new__(AgentLoop)
     loop.db = FakeDb()
