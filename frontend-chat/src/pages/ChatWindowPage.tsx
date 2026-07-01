@@ -1173,6 +1173,7 @@ export default function ChatWindowPage() {
   const [storeTick, setStoreTick] = useState(0);
   const [streamTick, setStreamTick] = useState(0);
   const [traceTick, setTraceTick] = useState(0);
+  const [feedbackTick, setFeedbackTick] = useState(0);
   const [expandedTraceIds, setExpandedTraceIds] = useState<string[]>([]);
   const [collapsedTraceIds, setCollapsedTraceIds] = useState<string[]>([]);
   const [scheduledDrafts, setScheduledDrafts] = useState<Record<string, ScheduledTaskDraftRead>>({});
@@ -1214,6 +1215,7 @@ export default function ChatWindowPage() {
   const notifyStore = useCallback(() => setStoreTick((value) => value + 1), []);
   const notifyStream = useCallback(() => setStreamTick((value) => value + 1), []);
   const notifyTrace = useCallback(() => setTraceTick((value) => value + 1), []);
+  const notifyFeedback = useCallback(() => setFeedbackTick((value) => value + 1), []);
   useEffect(() => () => {
     uploadControllersRef.current.forEach((controller) => controller.abort());
     uploadControllersRef.current.clear();
@@ -1507,8 +1509,9 @@ export default function ChatWindowPage() {
     if (!sessionId) return [];
     void storeTick;
     void streamTick;
+    void feedbackTick;
     return computeMergedMessages(getSlot(sessionId), getStreamSlot(sessionId).turnId);
-  }, [getSlot, getStreamSlot, sessionId, storeTick, streamTick]);
+  }, [feedbackTick, getSlot, getStreamSlot, sessionId, storeTick, streamTick]);
 
   const currentStream = useMemo(() => {
     void streamTick;
@@ -1808,8 +1811,8 @@ export default function ChatWindowPage() {
     );
     slot.serverMessages = slot.serverMessages.map(update);
     slot.realtimeMessages = slot.realtimeMessages.map(update);
-    notifyStore();
-  }, [getSlot, notifyStore]);
+    notifyFeedback();
+  }, [getSlot, notifyFeedback]);
 
   const updateStreaming = useCallback((id: string, text: string, turnId?: string) => {
     const slot = getSlot(id);
