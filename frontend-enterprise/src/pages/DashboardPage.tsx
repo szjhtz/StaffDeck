@@ -1,9 +1,25 @@
-import { Button, Card, Space, Tag, Typography, message } from 'antd';
+import { Button, Card, Space, Typography, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { ComponentType, ReactNode, SVGProps } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Badge, Button as UiButton, Tabs, TabsList, TabsTrigger } from '@/components/ui';
+import { EnterpriseRoute } from '../enums/routes';
+import IconChat from '../assets/icons/chat.svg?react';
+import IconEdit from '../assets/icons/edit.svg?react';
+import IconAccount from '../assets/icons/sys-accounts.svg?react';
+import IconProfileFile from '../assets/icons/profile-file.svg?react';
+import IconProfileAlarm from '../assets/icons/profile-alarm.svg?react';
+import IconProfileHistory from '../assets/icons/profile-history.svg?react';
+import IconProfileCalendar from '../assets/icons/profile-calendar.svg?react';
+import IconCapFolder from '../assets/icons/cap-folder.svg?react';
+import IconCapMagicWand from '../assets/icons/cap-magicwand.svg?react';
+import IconCapClipboard from '../assets/icons/cap-clipboard.svg?react';
+import IconCapBriefcase from '../assets/icons/cap-briefcase.svg?react';
+import IconCardArrow from '../assets/icons/card-arrow.svg?react';
+import IconGrowthArrow from '../assets/icons/growth-arrow.svg?react';
 import { api, TENANT_ID } from '../api/client';
 import { isEmployeeOwnedBy, isGalleryEmployee, type EnterpriseAuthUser } from '../auth';
+import AppHeader from '../components/AppHeader';
 import EmployeeAvatar from '../components/EmployeeAvatar';
 import EmployeeAvatarEditor from '../components/EmployeeAvatarEditor';
 import EmployeeProfileEditor from '../components/EmployeeProfileEditor';
@@ -32,10 +48,20 @@ import type {
 } from '../types';
 
 const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
-const HEATMAP_ROWS = 4;
+const HEATMAP_ROWS = 7;
 const HEATMAP_COLUMNS = 33;
 const HEATMAP_BUCKETS = HEATMAP_ROWS * HEATMAP_COLUMNS;
-const SD1_HEATMAP_MONTHS = [11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+// Rolling window: from the current month one year ago (left) to the current month (right).
+const HEATMAP_MONTH_SLOTS = 13;
+// Rows are Sun→Sat (第一行周日); labels only on 周一 / 周三 / 周五.
+const HEATMAP_WEEKDAY_LABELS = ['', '周一', '', '周三', '', '周五', ''];
+const HEATMAP_CELL_LEVELS = [
+  'bg-[#f6f6f6] in-data-[theme=dark]:bg-[#363944]',
+  'bg-[#cfd5e2] in-data-[theme=dark]:bg-[#5a6274]',
+  'bg-[#9aa3ba] in-data-[theme=dark]:bg-[#7b8498]',
+  'bg-[#6a7488] in-data-[theme=dark]:bg-[#a4adbf]',
+  'bg-[#464c5e] in-data-[theme=dark]:bg-[#f0f2f6]',
+];
 
 type ReplyStats = {
   total: number;
@@ -63,10 +89,12 @@ export default function DashboardPage({
   currentUser,
   isAdmin = false,
   forceOverall = false,
+  onLogout,
 }: {
   currentUser?: EnterpriseAuthUser;
   isAdmin?: boolean;
   forceOverall?: boolean;
+  onLogout?: () => void;
 }) {
   const navigate = useNavigate();
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
@@ -273,7 +301,7 @@ export default function DashboardPage({
       tone: 'knowledge',
       count: activeKnowledge.length,
       body: activeKnowledge.slice(0, 3).map((item) => staffdeckDisplayText(item.name)).join(' / ') || '暂无知识库',
-      icon: <StaffdeckIcon name="file" />,
+      icon: <IconCapFolder className="employee-cap-glyph" />,
       dark: false,
     },
     {
@@ -282,7 +310,7 @@ export default function DashboardPage({
       tone: 'skill',
       count: activeGeneralSkills.length,
       body: activeGeneralSkills.slice(0, 3).map((item) => staffdeckDisplayText(item.name)).join(' / ') || '暂无启用技能',
-      icon: <StaffdeckIcon name="spark" />,
+      icon: <IconCapMagicWand className="employee-cap-glyph" />,
       dark: false,
     },
     {
@@ -291,7 +319,7 @@ export default function DashboardPage({
       tone: 'sop',
       count: activeSkills.length,
       body: activeSkills.slice(0, 3).map((item) => staffdeckDisplayText(item.name)).join(' / ') || '暂无启用 SOP',
-      icon: <StaffdeckIcon name="filter" />,
+      icon: <IconCapClipboard className="employee-cap-glyph" />,
       dark: false,
     },
     {
@@ -300,7 +328,8 @@ export default function DashboardPage({
       tone: 'tools',
       count: activeTools.length,
       body: activeTools.slice(0, 3).map((item) => staffdeckDisplayText(item.display_name || item.name)).join(' / ') || '暂无启用工具',
-      icon: <StaffdeckIcon name="tool" />,
+      icon: <IconCapBriefcase className="employee-cap-glyph" />,
+      dark: true,
       illustration: capabilityTools,
     },
     {
@@ -309,7 +338,8 @@ export default function DashboardPage({
       tone: 'tasks',
       count: activeScheduledTasks.length,
       body: activeScheduledTasks.slice(0, 2).map((item) => staffdeckDisplayText(item.title)).join(' / ') || '暂无启用定时任务',
-      icon: <StaffdeckIcon name="clock" />,
+      icon: <IconProfileAlarm className="employee-cap-glyph" />,
+      dark: true,
       illustration: capabilityTasks,
     },
     {
@@ -318,63 +348,185 @@ export default function DashboardPage({
       tone: 'logs',
       count: replyStats.total,
       body: staffdeckDisplayText(employeeSessions[0]?.summary || employeeSessions[0]?.last_agent_question || '暂无对话任务'),
-      icon: <StaffdeckIcon name="chat" />,
+      icon: <IconProfileCalendar className="employee-cap-glyph" />,
+      dark: true,
       illustration: capabilityLogs,
     },
   ];
 
   const growthItems = growthTimeline(activeSkills, activeGeneralSkills, activeTools);
 
+  const heroActionButtonClass = 'inline-flex items-center justify-center gap-[4px] py-[8px] px-[12px] rounded-[14px] border-[0.5px] border-[#e3e7f1] bg-white text-[12px] font-normal text-[#858b9c] shadow-[0px_6px_6px_rgba(0,0,0,0.05)] hover:bg-[#f6f6f6] hover:text-[#858b9c]';
+  const heroAvatar = (
+    <EmployeeAvatar
+      agent={selectedAgent}
+      width={136}
+      height={160}
+      radius={0}
+      fit="contain"
+      objectPosition="center bottom"
+      style={{ background: 'transparent', border: 'none', boxShadow: 'none', overflow: 'visible' }}
+    />
+  );
+
   return (
-    <div className="page dashboard-page employee-dashboard-page employee-home-page">
-      <section className="employee-home-hero">
-        <div className="employee-id-card">
-          <EmployeeAvatar agent={selectedAgent} size={116} />
-          <div className="employee-avatar-actions">
-            <Button size="small" icon={<StaffdeckIcon name="chat" />} onClick={() => { window.location.href = '/chat/'; }}>
-              去对话
-            </Button>
-            {canEditSelectedAgent && (
-              <Button
-                size="small"
-                icon={<StaffdeckIcon name="edit" />}
-                onClick={() => setProfileEditorOpen(true)}
-              >
-                编辑资料
-              </Button>
-            )}
+    <div className="min-h-full w-full min-w-0 max-w-full box-border px-[48px] pt-[32px] pb-[43px] max-[900px]:px-[16px]">
+      <AppHeader
+        onLogout={onLogout}
+        userName={currentUser?.username}
+        left={(
+          <div className="flex flex-wrap items-center gap-x-9 gap-y-6 pt-1 pl-1">
+            <div className="flex shrink-0 flex-col items-center">
+              {canEditSelectedAgent ? (
+                <button
+                  type="button"
+                  onClick={() => setAvatarEditorOpen(true)}
+                  aria-label="更换头像"
+                  className="group relative block cursor-pointer border-0 bg-transparent p-0"
+                >
+                  {heroAvatar}
+                  <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-black/45 py-1 text-[11px] text-white opacity-0 transition-opacity group-hover:opacity-100">
+                    <IconAccount className="size-3" />
+                    更换头像
+                  </span>
+                </button>
+              ) : (
+                heroAvatar
+              )}
+              <div className="flex items-center gap-4">
+                <UiButton
+                  variant="outline"
+                  className={heroActionButtonClass}
+                  onClick={() => { window.location.href = '/chat/'; }}
+                >
+                  <IconChat className="size-[14px]" />
+                  去对话
+                </UiButton>
+                {canEditSelectedAgent && (
+                  <UiButton
+                    variant="outline"
+                    className={heroActionButtonClass}
+                    onClick={() => setProfileEditorOpen(true)}
+                  >
+                    <IconEdit className="size-[14px]" />
+                    编辑资料
+                  </UiButton>
+                )}
+              </div>
+            </div>
+
+            <div className="flex min-w-[280px] flex-1 flex-col gap-2">
+              <div className="flex items-end gap-2">
+                <h2 className="m-0 text-[22px] leading-none font-semibold text-[#18181a]">
+                  {employeeDisplayName(selectedAgent)}
+                </h2>
+                <span className="text-[13px] leading-none text-[#757f9c]">{employee.roleName || employeeDisplayName(selectedAgent)}</span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-4">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f6f6f6] px-2.5 py-0.5">
+                  <span
+                    className="size-1.5 rounded-full ring-[1.5px] ring-white"
+                    style={{ background: selectedAgent.status === 'active' ? '#22c55e' : '#c4c9d4' }}
+                  />
+                  <span className="text-[12px] text-[#757f9c]">
+                    {selectedAgent.status === 'active' ? '在线' : '下线'}
+                  </span>
+                </span>
+                <span className="text-[12px] text-[#757f9c]">入职时间：{employee.onboardedAt}</span>
+                <div className="flex flex-wrap items-center gap-3">
+                  {employee.workStyles.slice(0, 3).map((item) => (
+                    <Badge
+                      key={item}
+                      variant="outline"
+                      className="h-auto rounded-[10px] border-[0.5px] border-[#e3e7f1] px-4 py-1 text-[12px] font-normal text-[#757f9c]"
+                    >
+                      {item}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              <p className="m-0 line-clamp-2 max-w-[720px] text-[14px] leading-[22px] text-[#757f9c]">
+                {systemSummary}
+              </p>
+
+              <div className="flex w-full max-w-[514px] gap-3">
+                <HeroMetric value={activeKnowledge.length} label="资料" />
+                <HeroMetric value={activeGeneralSkills.length} label="技能" />
+                <HeroMetric value={activeSkills.length} label="SOP" />
+                <HeroMetric value={activeScheduledTasks.length} label="定时任务" />
+              </div>
+            </div>
           </div>
-          {canEditSelectedAgent && (
-            <Button
-              size="small"
-              className="employee-avatar-change"
-              icon={<StaffdeckIcon name="user" />}
-              onClick={() => setAvatarEditorOpen(true)}
-            >
-              更换头像
-            </Button>
+        )}
+      />
+      <EmployeeProfileTabs activeKey="work" />
+
+      <section className="relative flex w-full min-w-0 max-w-full mt-[-2px] flex-col gap-[24px] overflow-hidden rounded-[18px] shadow-[0_20px_42px_rgba(21,26,38,0.045)] bg-white p-[14px] *:min-w-0 min-[521px]:p-[18px] in-data-[theme=dark]:border-[#343741] in-data-[theme=dark]:bg-[#202126] in-data-[theme=dark]:text-[#f0f2f6]">
+        <div className="flex w-full items-stretch">
+          <ClickableMetric label="今日对话" value={todayRounds} onClick={goToLogs} />
+          <ClickableMetric label="累计对话" value={replyStats.total} onClick={goToLogs} />
+          <ClickableMetric label="好评率" value={positiveRate} suffix="%" onClick={goToLogs} />
+          <ClickableMetric label="差评率" value={negativeRate} suffix="%" onClick={goToLogs} />
+        </div>
+        <ConversationHeatmap byDay={replyStats.byDay} />
+        <div className="flex w-full min-w-0 max-w-full flex-col gap-[10px] my-[20px]">
+          <div className="inline-flex items-center gap-[6px] self-start text-[14px] capitalize leading-none text-[#757f9c] in-data-[theme=dark]:text-[#8b93a6]">
+            <IconGrowthArrow className="size-[14px] shrink-0" />
+            成长记录
+          </div>
+          {growthItems.length ? (
+            <div className="relative w-full min-w-0 max-w-full overflow-x-auto">
+              <div className="grid grid-flow-col auto-cols-[minmax(160px,1fr)] gap-[20px]">
+                {growthItems.map((item) => (
+                  <div className="relative flex flex-col items-center gap-[8px]" key={item.id}>
+                    <span className="pointer-events-none absolute left-[-10px] right-[-10px] top-[28px] z-0 h-px bg-[#e3e7f1] in-data-[theme=dark]:bg-[#363a45]" />
+                    <p className="m-0 text-center text-[12px] font-medium leading-[16px] text-[#18181a] in-data-[theme=dark]:text-[#f0f2f6]">
+                      {formatMonthDay(item.timestamp)}
+                    </p>
+                    <span className="relative z-10 size-[8px] shrink-0 rounded-full bg-[#18181a] in-data-[theme=dark]:bg-[#f0f2f6]" />
+                    <div className="relative flex w-[136px] flex-col gap-[4px] rounded-[14px] bg-[#f6f6f6] px-[16px] py-[10px] in-data-[theme=dark]:bg-[#2b2d33]">
+                      <span className="absolute top-[-8px] left-1/2 size-0 -translate-x-1/2 border-x-6 border-b-8 border-x-transparent border-b-[#f6f6f6] in-data-[theme=dark]:border-b-[#2b2d33]" />
+                      <span className="truncate text-[10px] leading-none text-[#757f9c]">{item.kind}</span>
+                      <span className="truncate text-[12px] leading-none text-[#464c5e] in-data-[theme=dark]:text-[#c9cede]">
+                        {staffdeckDisplayText(item.title)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="employee-memory-empty">暂无成长轨迹</div>
           )}
         </div>
-        <div className="employee-home-main">
-          <div className="employee-home-title-row">
-            <Typography.Title level={2}>{employee.roleName || employeeDisplayName(selectedAgent)}</Typography.Title>
-            <span>{employeeDisplayName(selectedAgent)}</span>
+
+        <div className="w-full min-w-0 max-w-full overflow-x-auto">
+          <div className="grid grid-flow-col auto-cols-[minmax(160px,1fr)] gap-[clamp(18px,2.22vw,32px)]">
+          {capabilityCards.map((item) => (
+            <button
+              type="button"
+              key={item.title}
+              className={`employee-cap-card${item.dark ? ' is-dark' : ''}`}
+              onClick={() => navigate(item.route)}
+            >
+              <IconCardArrow className="employee-cap-arrow" />
+              <span className="employee-cap-group">
+                <span className="employee-cap-head">
+                  {item.icon}
+                  <span className="employee-cap-name">{item.title}</span>
+                </span>
+                <span className="employee-cap-metric">
+                  <strong>{item.count}</strong>
+                  <span className="employee-cap-bar"><i /></span>
+                </span>
+              </span>
+              <span className="employee-cap-desc">{item.body}</span>
+              {item.illustration && <img className="employee-cap-art" src={item.illustration} alt="" />}
+            </button>
+          ))}
           </div>
-          <Space wrap className="employee-home-meta">
-            <span className={`employee-online-status ${selectedAgent.status === 'active' ? 'is-online' : 'is-offline'}`}>
-              <span className="employee-online-dot" />
-              <Typography.Text>{selectedAgent.status === 'active' ? '在线' : '下线'}</Typography.Text>
-            </span>
-            <Typography.Text type="secondary">入职时间：{employee.onboardedAt}</Typography.Text>
-            {employee.workStyles.slice(0, 3).map((item) => <Tag key={item}>{item}</Tag>)}
-          </Space>
-          <Typography.Paragraph className="employee-system-summary">{systemSummary}</Typography.Paragraph>
-        </div>
-        <div className="employee-home-side">
-          <MetricTile label="资料" value={activeKnowledge.length} />
-          <MetricTile label="技能" value={activeGeneralSkills.length} />
-          <MetricTile label="SOP" value={activeSkills.length} />
-          <MetricTile label="定期任务" value={activeScheduledTasks.length} />
         </div>
       </section>
       <EmployeeAvatarEditor
@@ -390,65 +542,6 @@ export default function DashboardPage({
         onClose={() => setProfileEditorOpen(false)}
         onSaved={(saved) => setAgents((current) => current.map((item) => (item.id === saved.id ? saved : item)))}
       />
-
-      <nav className="employee-profile-tabs" aria-label="个人档案分区">
-        <button type="button" className="active"><StaffdeckIcon name="file" /> 工作记录</button>
-        <button type="button" onClick={() => navigate('/enterprise/scheduled-tasks')}><StaffdeckIcon name="clock" /> 定时任务</button>
-        <button type="button" onClick={() => navigate('/enterprise/memories')}><StaffdeckIcon name="history" /> 记忆</button>
-        <button type="button" onClick={() => navigate('/enterprise/feedback')}><StaffdeckIcon name="calendar" /> 对话日志</button>
-      </nav>
-
-      <section className="employee-work-card">
-        <div className="employee-work-metrics">
-          <ClickableMetric label="今日对话" value={todayRounds} onClick={goToLogs} />
-          <ClickableMetric label="累计对话" value={replyStats.total} onClick={goToLogs} />
-          <ClickableMetric label="好评率" value={positiveRate} suffix="%" onClick={goToLogs} />
-          <ClickableMetric label="差评率" value={negativeRate} suffix="%" onClick={goToLogs} />
-        </div>
-        <ConversationHeatmap byDay={replyStats.byDay} />
-
-        <div className="employee-growth-title"><StaffdeckIcon name="arrow" /> 成长记录</div>
-        {growthItems.length ? (
-          <div className="employee-memory-timeline">
-            {growthItems.map((item) => (
-              <div className="employee-memory-event" key={item.id}>
-                <div className="employee-memory-date">
-                  <strong>{formatMonthDay(item.timestamp)}</strong>
-                  <span>{relativeTime(item.timestamp)}</span>
-                </div>
-                <span className={`employee-memory-dot is-${item.tone}`}>{item.icon}</span>
-                <div className="employee-memory-copy">
-                  <small>{item.kind}</small>
-                  <strong>{staffdeckDisplayText(item.title)}</strong>
-                  <span>{staffdeckDisplayText(item.description)}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="employee-memory-empty">暂无成长轨迹</div>
-        )}
-
-        <div className="employee-capability-grid">
-          {capabilityCards.map((item) => (
-            <Card
-              key={item.title}
-              className={`employee-capability-card tone-${item.tone}${item.dark ? ' is-dark' : ''}${item.illustration ? ' has-illustration' : ''}`}
-              hoverable
-              onClick={() => navigate(item.route)}
-            >
-              <div className="employee-capability-head">
-                <span>{item.icon}</span>
-                <em>{item.count}</em>
-              </div>
-              <strong className="employee-capability-title">{item.title}</strong>
-              <Typography.Paragraph ellipsis={{ rows: 2 }}>{item.body}</Typography.Paragraph>
-              {item.illustration && <img className="employee-capability-illustration" src={item.illustration} alt="" />}
-              <span className="employee-capability-action">查看详情 <StaffdeckIcon name="arrow" /></span>
-            </Card>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }
@@ -472,81 +565,180 @@ function MetricTile({ label, value }: { label: string; value: number }) {
   );
 }
 
+type ProfileTabKey = 'work' | 'scheduled' | 'memories' | 'logs';
+
+const PROFILE_TABS: {
+  key: ProfileTabKey;
+  label: string;
+  Icon: ComponentType<SVGProps<SVGSVGElement>>;
+  route: EnterpriseRoute;
+}[] = [
+  { key: 'work', label: '工作记录', Icon: IconProfileFile, route: EnterpriseRoute.Dashboard },
+  { key: 'scheduled', label: '定时任务', Icon: IconProfileAlarm, route: EnterpriseRoute.ScheduledTasks },
+  { key: 'memories', label: '记忆', Icon: IconProfileHistory, route: EnterpriseRoute.Memories },
+  { key: 'logs', label: '对话日志', Icon: IconProfileCalendar, route: EnterpriseRoute.Feedback },
+];
+
+function EmployeeProfileTabs({ activeKey = 'work' }: { activeKey?: ProfileTabKey }) {
+  const navigate = useNavigate();
+  return (
+    <Tabs
+      value={activeKey}
+      onValueChange={(value) => {
+        const tab = PROFILE_TABS.find((item) => item.key === value);
+        if (tab && value !== activeKey) navigate(tab.route);
+      }}
+      className="flex w-full flex-col items-center"
+    >
+      <TabsList
+        aria-label="个人档案分区"
+        className="h-[35px]! w-[504px] max-w-full gap-2 rounded-none bg-transparent p-0"
+      >
+        {PROFILE_TABS.map(({ key, label, Icon }) => (
+          <TabsTrigger
+            key={key}
+            value={key}
+            className="h-[35px] flex-1 gap-[7px] rounded-t-lg rounded-b-none border-0 text-[14px] font-bold text-[#8b94aa] hover:text-[#202226] data-[state=active]:bg-white data-[state=active]:text-[#202226] data-[state=active]:shadow-[0_-12px_28px_rgba(21,26,38,0.04)] in-data-[theme=dark]:text-[#8f98aa] in-data-[theme=dark]:hover:text-[#f0f2f6] in-data-[theme=dark]:data-[state=active]:bg-[#202126] in-data-[theme=dark]:data-[state=active]:text-[#c5ccd8] in-data-[theme=dark]:data-[state=active]:shadow-none"
+          >
+            <Icon />
+            {label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
+  );
+}
+
+function HeroMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex flex-1 items-end gap-1 rounded-[10px] bg-[#f6f6f6] px-5 py-2">
+      <strong className="text-[14px] leading-none font-medium text-[#18181a]">{value}</strong>
+      <span className="text-[12px] leading-none text-[#464c5e]">{label}</span>
+    </div>
+  );
+}
+
 function ClickableMetric({ label, value, suffix = '', onClick }: { label: string; value: number; suffix?: string; onClick: () => void }) {
   return (
-    <button type="button" className="employee-work-metric" onClick={onClick}>
-      <strong>{value}{suffix}</strong>
-      <span>{label}</span>
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex min-w-px flex-[1_0_0] cursor-pointer flex-col justify-center gap-1 border-[0.5px] border-[#e3e7f1] bg-transparent px-5 py-2.5 text-left transition-colors first:rounded-l-[14px] last:rounded-r-[14px] hover:bg-[#f7f8fa] in-data-[theme=dark]:border-[#343741] in-data-[theme=dark]:hover:bg-white/5"
+    >
+      <strong className="text-[18px] font-medium leading-none text-[#18181a] in-data-[theme=dark]:text-[#f0f2f6]">{value}{suffix}</strong>
+      <span className="text-[12px] leading-none text-[#464c5e] in-data-[theme=dark]:text-[#aeb6c6]">{label}</span>
     </button>
   );
 }
 
 function ConversationHeatmap({ byDay }: { byDay: Record<string, number> }) {
   const days = useMemo(() => heatmapDays(byDay), [byDay]);
+  const rows = useMemo(
+    () =>
+      Array.from({ length: HEATMAP_ROWS }, (_, row) =>
+        Array.from({ length: HEATMAP_COLUMNS }, (_, column) => days[column * HEATMAP_ROWS + row]),
+      ),
+    [days],
+  );
   return (
-    <div className="employee-heatmap">
-      <div className="employee-heatmap-months">
-        {monthLabels().map((item) => (
-          <span
-            key={`${item.label}-${item.offset}`}
-            style={{ gridColumn: `${item.offset + 1} / span ${item.span}` }}
-          >
-            {item.label}
-          </span>
-        ))}
-      </div>
-      <div className="employee-heatmap-body">
-        <div className="employee-heatmap-weekdays">
-          <span>周一</span>
-          <span>周二</span>
-          <span>周三</span>
-          <span>周四</span>
-        </div>
-        <div className="employee-heatmap-grid">
-          {days.map((day) => (
+    <div className="w-full overflow-x-auto overflow-y-hidden">
+      <div className="mx-auto flex w-max flex-col gap-[6px]">
+        <div className="ml-[52px] grid w-[714px] grid-cols-[repeat(33,10px)] gap-x-[12px] text-[10px] capitalize leading-none text-[#757f9c] in-data-[theme=dark]:text-[#8b93a6]">
+          {monthLabels().map((item) => (
             <span
-              key={day.key}
-              className={`employee-heatmap-cell level-${Math.min(4, day.count)}`}
-              title={`${day.label}: ${day.count} 轮对话`}
-            />
+              key={`${item.label}-${item.offset}`}
+              className="whitespace-nowrap"
+              style={{ gridColumn: `${item.offset + 1} / span ${item.span}` }}
+            >
+              {item.label}
+            </span>
           ))}
         </div>
-      </div>
-      <div className="employee-heatmap-legend">
-        <span>少</span>
-        {[0, 1, 2, 3, 4].map((level) => <i className={`level-${level}`} key={level} />)}
-        <span>多</span>
+        {rows.map((cells, row) => (
+          <div className="flex items-center gap-[32px]" key={`row-${row}`}>
+            <span className="w-[20px] shrink-0 text-[10px] capitalize leading-none text-[#757f9c] in-data-[theme=dark]:text-[#8b93a6]">
+              {HEATMAP_WEEKDAY_LABELS[row]}
+            </span>
+            <div className="flex gap-[12px]">
+              {cells.map((day) => (
+                <span
+                  key={day.key}
+                  className={`group relative size-[10px] shrink-0 rounded-[2.5px] border-[0.625px] border-solid border-[#e3e7f1] in-data-[theme=dark]:border-[#363a45] ${HEATMAP_CELL_LEVELS[Math.min(4, day.count)]}`}
+                >
+                  {day.count > 0 && (
+                    <span className={`pointer-events-none absolute left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-[6px] bg-[#303645] px-[8px] py-[5px] text-[11px] font-medium leading-none text-white shadow-[0_6px_16px_rgba(21,26,38,0.18)] group-hover:block in-data-[theme=dark]:bg-[#f0f2f6] in-data-[theme=dark]:text-[#202126] ${row < 2 ? 'top-full mt-[7px]' : 'bottom-full mb-[7px]'}`}>
+                      {day.label} · {day.count} 轮对话
+                      <span className={`absolute left-1/2 size-0 -translate-x-1/2 border-x-4 border-x-transparent ${row < 2 ? 'bottom-full border-b-4 border-b-[#303645] in-data-[theme=dark]:border-b-[#f0f2f6]' : 'top-full border-t-4 border-t-[#303645] in-data-[theme=dark]:border-t-[#f0f2f6]'}`} />
+                    </span>
+                  )}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+        <div className="mt-[4px] flex items-center justify-center gap-[6px] text-[12px] leading-none text-[#757f9c] in-data-[theme=dark]:text-[#8b93a6]">
+          <span>少</span>
+          {[1, 2, 3, 4].map((level) => (
+            <span
+              key={`legend-${level}`}
+              className={`size-[12px] shrink-0 rounded-[3px] border-[0.625px] border-solid border-[#e3e7f1] in-data-[theme=dark]:border-[#363a45] ${HEATMAP_CELL_LEVELS[level]}`}
+            />
+          ))}
+          <span>多</span>
+        </div>
       </div>
     </div>
   );
 }
 
+// Ascending rolling months ending at the current month, e.g. [去年7月 … 今年7月].
+function heatmapMonthSequence() {
+  const now = new Date();
+  return Array.from({ length: HEATMAP_MONTH_SLOTS }, (_, index) => {
+    const offsetFromNow = HEATMAP_MONTH_SLOTS - 1 - index;
+    const date = new Date(now.getFullYear(), now.getMonth() - offsetFromNow, 1);
+    return { year: date.getFullYear(), month: date.getMonth() };
+  });
+}
+
+// Canonical partition of the columns into month slots, shared by the data grid
+// and the month labels so they always line up.
+function heatmapMonthColumnStart(slot: number) {
+  return Math.floor((slot * HEATMAP_COLUMNS) / HEATMAP_MONTH_SLOTS);
+}
+
+function heatmapSlotForColumn(column: number) {
+  for (let slot = HEATMAP_MONTH_SLOTS - 1; slot >= 0; slot -= 1) {
+    if (column >= heatmapMonthColumnStart(slot)) return slot;
+  }
+  return 0;
+}
+
 function heatmapDays(byDay: Record<string, number>) {
-  const year = new Date().getFullYear();
+  const months = heatmapMonthSequence();
   return Array.from({ length: HEATMAP_BUCKETS }, (_, index) => {
     const column = Math.floor(index / HEATMAP_ROWS);
     const row = index % HEATMAP_ROWS;
-    const monthSlot = Math.min(SD1_HEATMAP_MONTHS.length - 1, Math.floor((column * SD1_HEATMAP_MONTHS.length) / HEATMAP_COLUMNS));
-    const monthIndex = SD1_HEATMAP_MONTHS[monthSlot];
-    const monthStartColumn = Math.floor((monthSlot * HEATMAP_COLUMNS) / SD1_HEATMAP_MONTHS.length);
-    const monthEndColumn = Math.floor(((monthSlot + 1) * HEATMAP_COLUMNS) / SD1_HEATMAP_MONTHS.length);
+    const monthSlot = heatmapSlotForColumn(column);
+    const { year, month } = months[monthSlot];
+    const monthStartColumn = heatmapMonthColumnStart(monthSlot);
+    const monthEndColumn = heatmapMonthColumnStart(monthSlot + 1);
     const columnsInMonth = Math.max(1, monthEndColumn - monthStartColumn);
     const cellsInMonth = columnsInMonth * HEATMAP_ROWS;
     const cellInMonth = (column - monthStartColumn) * HEATMAP_ROWS + row;
-    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
     const startDay = Math.min(daysInMonth, Math.floor((cellInMonth * daysInMonth) / cellsInMonth) + 1);
     const endDay = Math.max(startDay, Math.min(daysInMonth, Math.floor(((cellInMonth + 1) * daysInMonth) / cellsInMonth)));
-    const bucketStart = new Date(year, monthIndex, startDay);
-    const bucketEnd = new Date(year, monthIndex, endDay);
+    const bucketStart = new Date(year, month, startDay);
+    const bucketEnd = new Date(year, month, endDay);
     let count = 0;
     for (let dayOfMonth = startDay; dayOfMonth <= endDay; dayOfMonth += 1) {
-      const day = new Date(year, monthIndex, dayOfMonth);
-      count += byDay[dateKey(day)] || 0;
+      count += byDay[dateKey(new Date(year, month, dayOfMonth))] || 0;
     }
     const startKey = dateKey(bucketStart);
     const endKey = dateKey(bucketEnd);
     return {
-      key: `${startKey}-${endKey}`,
+      key: `${index}-${startKey}`,
       label: startKey === endKey ? startKey : `${startKey} 至 ${endKey}`,
       date: bucketStart,
       count,
@@ -555,13 +747,14 @@ function heatmapDays(byDay: Record<string, number>) {
 }
 
 function monthLabels() {
-  return SD1_HEATMAP_MONTHS.map((monthIndex, index) => {
-    const offset = Math.floor((index * HEATMAP_COLUMNS) / SD1_HEATMAP_MONTHS.length);
-    const nextOffset = Math.floor(((index + 1) * HEATMAP_COLUMNS) / SD1_HEATMAP_MONTHS.length);
+  const months = heatmapMonthSequence();
+  return months.map((item, index) => {
+    const offset = heatmapMonthColumnStart(index);
+    const nextOffset = heatmapMonthColumnStart(index + 1);
     return {
-      label: `${monthIndex + 1}月`,
+      label: `${item.month + 1}月`,
       offset,
-      span: Math.max(2, nextOffset - offset),
+      span: Math.max(1, nextOffset - offset),
     };
   });
 }
@@ -613,7 +806,7 @@ function growthTimeline(
     });
   });
 
-  tools.slice(0, 3).forEach((item) => {
+  tools.forEach((item) => {
     events.push({
       id: `tool-${item.id}`,
       kind: '新增工具',
@@ -627,8 +820,7 @@ function growthTimeline(
 
   return events
     .filter((item) => Boolean(item.timestamp))
-    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-    .slice(-4);
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
 function stableGrowthTimestamp(item: GrowthTimestampSource): string {
@@ -652,18 +844,7 @@ function isMeaningfullyUpdated(createdAt?: string, updatedAt?: string): boolean 
 function formatMonthDay(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
-  return `${date.getMonth() + 1}/${date.getDate()}`;
-}
-
-function relativeTime(value?: string): string {
-  if (!value) return '暂无';
-  const diff = Date.now() - new Date(value).getTime();
-  if (!Number.isFinite(diff) || diff < 0) return '刚刚';
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 60) return `${Math.max(1, minutes)} 分钟前`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
-  return `${Math.floor(hours / 24)} 天前`;
+  return `${date.getMonth() + 1}.${date.getDate()}`;
 }
 
 function formatTaskSchedule(task: ScheduledTaskRead): string {

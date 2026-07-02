@@ -48,8 +48,6 @@ export default function EmployeeAvatar({
 
   const className_ = [
     'employee-avatar',
-    `tone-${profile.avatarTone || 'teal'}`,
-    `avatar-preset-${profile.avatarPreset || DEFAULT_AVATAR_PRESET}`,
     uploaded ? 'is-uploaded-avatar' : '',
     className,
   ]

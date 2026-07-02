@@ -267,7 +267,7 @@ function Shell({
           window.location.href = '/chat/';
         }}
       />
-      <Layout>
+      <Layout className="min-w-0">
         <Content className={`content ${selected === '/enterprise/dashboard' ? 'sd1-dashboard-content' : ''} ${selected !== '/enterprise/dashboard' && !isDistillRoute ? 'sd1-management-content' : ''}`}>
           <div className={isDistillRoute ? 'persistent-distill active' : 'persistent-distill hidden'}>
             <DistillPage active={isDistillRoute} searchParamsOverride={distillSearchParams} />
@@ -277,7 +277,7 @@ function Shell({
               <Route path="/enterprise" element={<Navigate to="/enterprise/dashboard" replace />} />
               <Route path="/enterprise/platform" element={<OpenPlatformPage currentUser={auth.user} isAdmin={isAdmin} />} />
               <Route path="/enterprise/platform/:kind" element={<OpenPlatformPage currentUser={auth.user} isAdmin={isAdmin} />} />
-              <Route path="/enterprise/dashboard" element={<DashboardPage currentUser={auth.user} isAdmin={isAdmin} />} />
+              <Route path="/enterprise/dashboard" element={<DashboardPage currentUser={auth.user} isAdmin={isAdmin} onLogout={onLogout} />} />
               <Route path="/enterprise/agents" element={<AgentsPage currentUser={auth.user} isAdmin={isAdmin} onCreateAgent={openCreateAgentModal} onLogout={onLogout} />} />
               <Route path="/enterprise/memories" element={<MemoriesPage />} />
               <Route path="/enterprise/knowledge" element={<KnowledgeManagePage />} />

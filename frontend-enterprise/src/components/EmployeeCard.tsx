@@ -98,7 +98,7 @@ export default function EmployeeCard({
               height={94}
               fit="contain"
               objectPosition="center bottom"
-              className="overflow-visible! rounded-none! border-0! bg-transparent! shadow-none! after:hidden!"
+              className="overflow-visible! rounded-none! border-0! bg-transparent! bg-none! shadow-none! after:hidden!"
             />
           </div>
           

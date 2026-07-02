@@ -14626,126 +14626,198 @@ body,
   align-items: stretch;
 }
 
-.employee-capability-card.ant-card {
+.employee-cap-card {
+  position: relative;
+  width: 100%;
   height: 230px;
   min-width: 0;
-  border: 1px solid #eef1f5;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+  text-align: left;
+  border: 1px solid #f6f6f6;
   border-radius: 20px;
   background: #ffffff;
-  box-shadow: 0 16px 34px rgba(21, 26, 38, 0.06);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.05);
   overflow: hidden;
+  cursor: pointer;
+  appearance: none;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
-.employee-capability-card.ant-card .ant-card-body {
-  position: relative;
-  height: 100%;
-  min-width: 0;
-  padding: 20px 24px;
-  display: grid;
-  grid-template-rows: auto auto auto 1fr;
-  align-content: start;
+.employee-cap-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.08);
 }
 
-.employee-capability-card.is-dark.ant-card {
-  border-color: #242428;
+.employee-cap-card.is-dark {
+  border-color: #29282d;
   color: #ffffff;
-  background: #242428;
+  background: #29282d;
   box-shadow: none;
 }
 
-.employee-capability-head {
+.employee-cap-card.is-dark:hover {
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
+}
+
+.employee-cap-arrow {
+  position: absolute;
+  top: 13px;
+  right: 8px;
+  width: 20px;
+  height: 20px;
+  color: #858b9c;
+  pointer-events: none;
+}
+
+.employee-cap-card.is-dark .employee-cap-arrow {
+  color: #c7ccd6;
+}
+
+.employee-cap-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.employee-cap-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  color: #8e97aa;
-  font-size: 18px;
+  gap: 6px;
+  min-width: 0;
+  padding-right: 24px;
 }
 
-.employee-capability-head > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  width: auto !important;
-  height: auto !important;
-  color: inherit !important;
-  border-radius: 0 !important;
-  background: transparent !important;
+.employee-cap-glyph {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: #858b9c;
 }
 
-.employee-capability-head em {
-  position: absolute;
-  left: 24px;
-  top: 58px;
-  width: auto !important;
-  height: auto !important;
-  display: block !important;
-  color: #202226;
-  font-size: 32px;
-  line-height: 36px;
-  font-style: normal;
-  font-weight: 760;
-  border: 0 !important;
-  border-radius: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-}
-
-.employee-capability-card.is-dark .employee-capability-head,
-.employee-capability-card.is-dark .employee-capability-head em {
+.employee-cap-card.is-dark .employee-cap-glyph {
   color: #ffffff;
 }
 
-.employee-capability-title {
+.employee-cap-name {
   min-width: 0;
-  margin-left: 24px;
   overflow: hidden;
-  color: #8d96aa;
-  font-size: 16px;
-  font-weight: 760;
+  color: #858b9c;
+  font-size: 14px;
+  font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.employee-capability-card.is-dark .employee-capability-title {
+.employee-cap-card.is-dark .employee-cap-name {
   color: #ffffff;
 }
 
-.employee-capability-card .ant-typography {
+.employee-cap-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.employee-cap-metric strong {
+  color: #18181a;
+  font-size: 24px;
+  line-height: 1;
+  font-weight: 600;
+}
+
+.employee-cap-card.is-dark .employee-cap-metric strong {
+  color: #ffffff;
+}
+
+.employee-cap-bar {
+  display: block;
+  width: 100%;
+  height: 4px;
+  border-radius: 90px;
+  background: #e9e9e9;
+  overflow: hidden;
+}
+
+.employee-cap-bar i {
+  display: block;
+  width: 20px;
+  height: 100%;
+  border-radius: 90px;
+  background: #282931;
+}
+
+.employee-cap-card.is-dark .employee-cap-bar {
+  background: #6a6a6a;
+}
+
+.employee-cap-card.is-dark .employee-cap-bar i {
+  background: #e9e9e9;
+}
+
+.employee-cap-desc {
   min-width: 0;
-  margin: 50px 0 0 !important;
+  overflow: hidden;
+  color: #757f9c;
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 400;
   overflow-wrap: anywhere;
-  color: #7d879c;
-  font-size: 12px;
-  line-height: 18px;
-  font-weight: 650;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
 }
 
-.employee-capability-card.is-dark .ant-typography {
-  color: #d8dbe2;
+.employee-cap-card.is-dark .employee-cap-desc {
+  color: #f6f6f6;
+  -webkit-line-clamp: 2;
 }
 
-.employee-capability-card .employee-capability-action {
+.employee-cap-art {
   position: absolute;
-  right: 24px;
-  top: 20px;
-  color: #8b94aa;
-  font-size: 0;
-}
-
-.employee-capability-card .employee-capability-action .sd1-icon {
-  width: 18px;
-  height: 18px;
-  transform: rotate(-45deg);
-}
-
-.employee-capability-illustration {
-  position: absolute;
-  right: 18px;
+  left: 50%;
   bottom: 0;
+  transform: translateX(-50%);
   width: 120px;
   height: 84px;
   object-fit: contain;
   object-position: center bottom;
+  pointer-events: none;
+}
+
+:root[data-theme='dark'] .employee-cap-card {
+  border-color: #343741;
+  background: #202126;
+  box-shadow: none;
+}
+
+:root[data-theme='dark'] .employee-cap-card.is-dark {
+  border-color: #343741;
+  background: #2a2b31;
+}
+
+:root[data-theme='dark'] .employee-cap-card:not(.is-dark) .employee-cap-name,
+:root[data-theme='dark'] .employee-cap-card:not(.is-dark) .employee-cap-glyph {
+  color: #c7ccd6;
+}
+
+:root[data-theme='dark'] .employee-cap-card:not(.is-dark) .employee-cap-metric strong {
+  color: #f0f2f6;
+}
+
+:root[data-theme='dark'] .employee-cap-card:not(.is-dark) .employee-cap-desc {
+  color: #aeb6c6;
+}
+
+:root[data-theme='dark'] .employee-cap-card:not(.is-dark) .employee-cap-bar {
+  background: #343741;
+}
+
+:root[data-theme='dark'] .employee-cap-card:not(.is-dark) .employee-cap-bar i {
+  background: #c7ccd6;
 }
 
 @media (min-width: 1181px) {
@@ -14818,23 +14890,13 @@ body,
   }
 
   .employee-capability-grid {
-    position: absolute;
-    left: 18px;
-    top: 440px;
-    width: calc(100% - 36px);
-    height: 230px;
     grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
     gap: 32px !important;
   }
 
-  .employee-capability-card.ant-card,
-  .employee-capability-card.is-dark.ant-card {
+  .employee-cap-card {
     border-radius: 20px !important;
-  }
-
-  .employee-capability-card.ant-card .ant-card-body,
-  .employee-capability-card.is-dark .ant-card-body {
-    padding: 20px 24px 14px !important;
+    padding: 20px 24px !important;
   }
 }
 
@@ -15912,8 +15974,6 @@ body:has(.sd1-scheduled-page) .topbar {
   }
 
   .employee-capability-grid {
-    top: 403px;
-    height: auto;
     min-height: 230px;
   }
 }

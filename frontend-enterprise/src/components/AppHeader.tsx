@@ -37,14 +37,14 @@ export default function AppHeader({ left, right, onLogout, userName, className }
   const initial = userName?.trim()?.[0]?.toUpperCase();
 
   return (
-    <header className={cn('flex w-full items-center gap-[16px]', className)}>
+    <header className={cn('flex w-full gap-[16px]', className)}>
       <div className="min-w-0 flex-1">{left}</div>
-      <div className="flex shrink-0 items-center gap-[8px]">
+      <div className="flex shrink-0 items-start gap-[8px]">
         {right !== undefined ? right : (
         <DropdownMenu>
           <DropdownMenuTrigger
             aria-label="账户菜单"
-            className="flex shrink-0 items-center gap-[10px] rounded-[10px] py-[4px] pl-[6px] pr-[10px] outline-none"
+            className="flex shrink-0 items-center gap-[10px] rounded-[10px] py-[4px] pl-[6px] pr-[10px] outline-none mt-[4px]"
           >
             <span className="grid size-[32px] shrink-0 place-items-center overflow-hidden rounded-full bg-[#eef1fb] text-[14px] font-medium text-[#7e96dc] dark:bg-white/10">
               {initial ?? <StaffdeckIcon name="user" size={18} />}
