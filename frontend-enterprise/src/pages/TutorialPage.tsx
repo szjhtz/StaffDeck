@@ -125,7 +125,7 @@ const FEATURES: Feature[] = [
 const QUICK_STEPS: QuickStep[] = [
   {
     title: '建立运行底座',
-    body: '准备 OpenAI 兼容模型、单端口服务和 demo 租户数据，让企业端、聊天端、API 文档在同一个本地入口下运行。',
+    body: '准备 OpenAI 兼容模型、单端口服务和 demo 租户数据，让企业端、对话端、API 文档在同一个本地入口下运行。',
     outcome: '系统可启动、页面可访问、模型可用于生成。',
   },
   {
@@ -183,7 +183,7 @@ const SCENARIOS: Scenario[] = [
 ];
 
 const ARCHITECTURE_LAYERS = [
-  ['入口层', '聊天端承接真实用户表达；企业端负责配置、运营和复盘。'],
+  ['入口层', '对话端承接真实用户表达；企业端负责配置、运营和复盘。'],
   ['配置层', '模型、员工、知识库、技能、SOP、工具、定时任务共同定义员工能力。'],
   ['运行层', 'Router、Agent Loop、Skill Runtime 和 Response Generator 推进任务。'],
   ['上下文层', '知识引用、长期记忆、会话状态和反馈结果进入下一次决策。'],
@@ -293,13 +293,13 @@ export default function TutorialPage() {
         <SectionHeading
           eyebrow="Getting Started"
           title="安装与入口"
-          body="推荐单端口启动：企业端、聊天端和 API 文档都由同一个 FastAPI 进程挂载，适合本地演示和外部隧道测试。"
+          body="推荐单端口启动：企业端、对话端和 API 文档都由同一个 FastAPI 进程挂载，适合本地演示和外部隧道测试。"
         />
         <div className="tutorial-doc-install-grid">
           <div className="tutorial-doc-command-card">
             <span>一键启动</span>
             <code>scripts/dev_up.sh</code>
-            <p>构建前端，并挂载聊天端、企业端和 API。</p>
+            <p>构建前端，并挂载对话端、企业端和 API。</p>
           </div>
           <div className="tutorial-doc-command-card">
             <span>后台运行</span>
@@ -388,7 +388,7 @@ export default function TutorialPage() {
         <SectionHeading
           eyebrow="Architecture"
           title="架构概览"
-          body="当前仓库由后端服务、企业端控制台和聊天端组成。企业端负责配置，聊天端负责使用，后端运行对话、知识、工具和任务。"
+          body="当前仓库由后端服务、企业端控制台和对话端组成。企业端负责配置，对话端负责使用，后端运行对话、知识、工具和任务。"
         />
         <div className="tutorial-doc-architecture">
           {ARCHITECTURE_LAYERS.map(([title, body]) => (
@@ -474,7 +474,7 @@ export default function TutorialPage() {
         <div className="tutorial-doc-faq">
           <details open>
             <summary>模型测试失败怎么办？</summary>
-            <p>检查 API Key、Base URL 是否包含 `/v1`、模型 ID、余额和网络。先让默认模型测试通过，再验证聊天端。</p>
+            <p>检查 API Key、Base URL 是否包含 `/v1`、模型 ID、余额和网络。先让默认模型测试通过，再验证对话端。</p>
           </details>
           <details>
             <summary>SOP 为什么重复追问？</summary>

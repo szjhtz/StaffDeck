@@ -176,7 +176,7 @@ export default function EmployeeProfileEditor({
             <div>
               <Typography.Text strong>发布到广场</Typography.Text>
               <Typography.Paragraph type="secondary">
-                开启后，其他账号可以在聊天端和数字员工广场中选择这个员工。
+                开启后，其他账号可以在对话端和数字员工广场中选择这个员工。
               </Typography.Paragraph>
             </div>
             <Form.Item name="publishedToGallery" valuePropName="checked" noStyle>

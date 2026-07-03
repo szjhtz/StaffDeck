@@ -120,7 +120,7 @@ export default function EmployeeAvatarEditor({
           <div>
             <Typography.Text strong>{mode === 'upload' ? '自定义头像' : selected.label}</Typography.Text>
             <Typography.Paragraph type="secondary">
-              头像会显示在我的数字员工、数字员工档案页和聊天端的员工选择中。
+              头像会显示在我的数字员工、数字员工档案页和对话端的员工选择中。
             </Typography.Paragraph>
           </div>
         </div>

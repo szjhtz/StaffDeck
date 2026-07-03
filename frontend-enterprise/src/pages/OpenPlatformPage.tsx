@@ -47,11 +47,11 @@ const PLATFORM_CONFIGS: PlatformConfig[] = [
   {
     kind: 'agents',
     title: '数字员工广场',
-    subtitle: '已发布到广场，可在聊天端直接使用。',
+    subtitle: '已发布到广场，可在对话端直接使用。',
     detail: '选择一个数字员工查看能力、岗位和服务范围。',
     useLabel: '使用此员工',
     metricLabel: '数字员工',
-    signals: ['聊天端可用', '支持直接对话', '岗位能力可查看'],
+    signals: ['对话端可用', '支持直接对话', '岗位能力可查看'],
     icon: <UsergroupAddOutlined />,
   },
   {

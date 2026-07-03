@@ -232,7 +232,7 @@ function SidebarFooterActions({ onOpenChat }: { onOpenChat: () => void }) {
       <button
         type="button"
         onClick={onOpenChat}
-        title="聊天端"
+        title="对话端"
         className={cn(
           'flex h-[40px] w-[130px] items-center justify-center gap-[6px] rounded-[10px] border-[0.5px] border-[#E3E7F1] bg-[#F6F6F6] px-[20px] py-[4px] text-[14px] text-sidebar-accent-foreground transition-opacity hover:opacity-70 dark:border-sidebar-border dark:bg-sidebar-accent',
           'group-data-[collapsible=icon]:size-[40px] group-data-[collapsible=icon]:w-[40px] group-data-[collapsible=icon]:px-0',
