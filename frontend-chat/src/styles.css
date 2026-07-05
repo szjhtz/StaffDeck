@@ -2490,6 +2490,14 @@ textarea,
   transform: rotate(90deg);
 }
 
+.trace-chevron-icon {
+  transition: transform 160ms ease;
+}
+
+.trace-chevron-icon.is-expanded {
+  transform: rotate(90deg);
+}
+
 .turn-trace-summary.running .trace-icon-slot,
 .turn-trace-line.running .trace-icon-slot,
 .turn-trace-line.running .trace-terminal-icon,
@@ -5399,7 +5407,6 @@ body,
 }
 
 .assistant-trace .trace-chevron-slot .sd1-icon,
-.assistant-trace .trace-chevron-slot .cot-trace-icon,
 .assistant-trace .turn-trace-summary .cot-trace-icon {
   width: 14px !important;
   height: 14px !important;

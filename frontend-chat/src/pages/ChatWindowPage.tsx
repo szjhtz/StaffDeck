@@ -465,22 +465,21 @@ function CotTraceIcon({ name, className = '' }: { name: CotTraceIconName; classN
 }
 
 function traceSummaryIconName(summary: { state: TraceLine['state'] }): CotTraceIconName {
-  if (summary.state === 'running') return 'loading';
-  if (summary.state === 'failed') return 'judge';
-  return 'generated';
+  void summary;
+  return 'execute';
 }
 
 function traceLineIconName(line: TraceLine): CotTraceIconName {
-  const text = `${line.text || ''} ${line.detail || ''}`;
-  if (line.output || /已生成|生成.*完成|生成定时任务|查看输出|运行结果可用/.test(text)) return 'generated';
-  if (line.kind === 'tool' || /工具|调用/.test(text)) return 'tool';
-  if (line.kind === 'code' || line.code || /执行代码|运行代码|代码|Bash|Python|脚本/.test(text)) return 'execute';
-  if (/推进|下一步|下一节点|继续|流转|路由/.test(text)) return 'advance';
-  if (line.kind === 'skill' || /选择技能|技能/.test(text)) return 'select';
-  if (/重新分析|重新校验|反思|校验/.test(text)) return 'loading';
-  if (line.kind === 'knowledge') return 'generated';
-  if (line.kind === 'thinking' || /思考|加载|处理中/.test(text)) return line.state === 'completed' ? 'generated' : 'loading';
-  return 'judge';
+  const primaryText = line.text || '';
+  const text = `${primaryText} ${line.detail || ''}`;
+  if (/判断意图|意图识别|识别意图|router|routing/i.test(primaryText)) return 'judge';
+  if (/重新分析|重新生成|重新校验|重新尝试|重新规划|反思|重试|修复|repair|retry|review/i.test(primaryText)) return 'loading';
+  if (line.kind === 'tool' || /工具|调用/.test(primaryText)) return 'tool';
+  if (line.kind === 'code' || line.code || line.output || /生成代码|代码生成|已生成|执行代码|运行代码|Bash|Python|脚本/i.test(primaryText)) return 'generated';
+  if (line.kind === 'skill' || /推进|下一步|下一节点|继续|流转|路由|步骤|技能|SOP/i.test(text)) return 'advance';
+  if (line.kind === 'knowledge') return 'advance';
+  if (line.kind === 'thinking' || /思考|加载|处理中/.test(text)) return 'loading';
+  return 'advance';
 }
 
 function parseMessageTime(value?: string): number {
@@ -1997,7 +1996,7 @@ export default function ChatWindowPage() {
         <span className="trace-primary-text" data-text={summary.text}>{summary.text}</span>
         {details.length > 0 && (
           <span className="trace-chevron-slot">
-            <CotTraceIcon name="advance" className={expanded ? 'is-expanded' : ''} />
+            <StaffdeckIcon name="arrow" className={`trace-chevron-icon${expanded ? ' is-expanded' : ''}`} size={14} />
           </span>
         )}
       </button>
