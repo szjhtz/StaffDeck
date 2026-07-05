@@ -1386,6 +1386,119 @@ function citationSectionLabel(citation: KnowledgeCitation): string {
   return citationDisplayTitle({ ...citation, title: raw });
 }
 
+function extractPastedComposerFiles(clipboardData: DataTransfer): File[] {
+  const files: File[] = [];
+  const seen = new Set<string>();
+
+  const pushFile = (file: File | null | undefined, index: number) => {
+    if (!file || file.size <= 0) return;
+    const normalized = normalizePastedFile(file, index);
+    const key = pastedFileKey(normalized);
+    if (seen.has(key)) return;
+    seen.add(key);
+    files.push(normalized);
+  };
+
+  Array.from(clipboardData.files || []).forEach((file, index) => pushFile(file, index));
+
+  Array.from(clipboardData.items || []).forEach((item, index) => {
+    if (item.kind !== 'file' || !item.type.startsWith('image/')) return;
+    pushFile(item.getAsFile(), files.length + index);
+  });
+
+  const dataUrls = [
+    ...extractImageDataUrls(clipboardData.getData('text/html')),
+    ...extractImageDataUrls(clipboardData.getData('text/plain')),
+  ];
+  dataUrls.forEach((dataUrl, index) => pushFile(dataUrlToImageFile(dataUrl, index), files.length + index));
+
+  return files;
+}
+
+function normalizePastedFile(file: File, index: number): File {
+  const type = file.type || 'application/octet-stream';
+  const hasUsefulName = Boolean(file.name && !/^image\.(png|jpe?g|gif|webp)$/i.test(file.name));
+  if (hasUsefulName) return file;
+
+  const filename = type.startsWith('image/')
+    ? `pasted-image-${Date.now()}-${index + 1}.${imageExtension(type)}`
+    : (file.name || `pasted-file-${Date.now()}-${index + 1}`);
+  return new File([file], filename, { type, lastModified: file.lastModified || Date.now() });
+}
+
+function pastedFileKey(file: File): string {
+  return `${file.type || 'application/octet-stream'}:${file.size}`;
+}
+
+function extractImageDataUrls(raw: string): string[] {
+  if (!raw) return [];
+  const urls = new Set<string>();
+  const text = raw.trim();
+  if (isImageDataUrl(text)) {
+    urls.add(text);
+  }
+
+  try {
+    const document = new DOMParser().parseFromString(raw, 'text/html');
+    Array.from(document.images).forEach((image) => {
+      const src = image.getAttribute('src') || '';
+      if (isImageDataUrl(src)) urls.add(src);
+    });
+  } catch {
+    // DOMParser is best-effort here; the regex below still catches inline image data.
+  }
+
+  const matches = raw.match(/data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+-]+=[^,;]*)*;base64,[a-z0-9+/=\r\n]+/gi) || [];
+  matches.forEach((url) => {
+    if (isImageDataUrl(url)) urls.add(url);
+  });
+  return Array.from(urls);
+}
+
+function isImageDataUrl(value: string): boolean {
+  return /^data:image\/[a-z0-9.+-]+(?:;[^,]*)?,/i.test(value.trim());
+}
+
+function dataUrlToImageFile(dataUrl: string, index: number): File | null {
+  const match = dataUrl.trim().match(/^data:(image\/[a-z0-9.+-]+)((?:;[^,]*)?),(.*)$/i);
+  if (!match) return null;
+  const type = match[1] || 'image/png';
+  const meta = match[2] || '';
+  const payload = match[3] || '';
+
+  try {
+    const bytes = meta.toLowerCase().includes(';base64')
+      ? bytesFromBase64(payload)
+      : new TextEncoder().encode(decodeURIComponent(payload));
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    return new File([buffer], `pasted-image-${Date.now()}-${index + 1}.${imageExtension(type)}`, { type });
+  } catch {
+    return null;
+  }
+}
+
+function bytesFromBase64(payload: string): Uint8Array {
+  const binary = window.atob(payload.replace(/\s/g, ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function imageExtension(contentType: string): string {
+  const normalized = contentType.toLowerCase().split(';')[0];
+  if (normalized === 'image/jpeg' || normalized === 'image/jpg') return 'jpg';
+  if (normalized === 'image/png') return 'png';
+  if (normalized === 'image/gif') return 'gif';
+  if (normalized === 'image/webp') return 'webp';
+  if (normalized === 'image/bmp') return 'bmp';
+  if (normalized === 'image/svg+xml') return 'svg';
+  if (normalized === 'image/heic') return 'heic';
+  if (normalized === 'image/tiff') return 'tiff';
+  return 'png';
+}
+
 export default function ChatWindowPage() {
   const { sessionId, draftAgentId } = useParams<{ sessionId?: string; draftAgentId?: string }>();
   const navigate = useNavigate();
@@ -3228,7 +3341,7 @@ export default function ChatWindowPage() {
   }
 
   function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
-    const files = Array.from(event.clipboardData.files || []);
+    const files = extractPastedComposerFiles(event.clipboardData);
     if (!files.length) return;
     event.preventDefault();
     uploadComposerFiles(files);
