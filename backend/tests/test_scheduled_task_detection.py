@@ -27,6 +27,14 @@ def test_fallback_draft_extracts_basic_weekly_keyword() -> None:
     assert draft.schedule == {"time": "18:00", "weekdays": [4]}
 
 
+def test_fallback_draft_extracts_basic_weekday_from_xingqi_keyword() -> None:
+    draft = _fallback_draft("星期天21点复盘服务投诉")
+
+    assert draft is not None
+    assert draft.schedule_type == "weekly"
+    assert draft.schedule == {"time": "21:00", "weekdays": [6]}
+
+
 def test_fallback_draft_extracts_basic_monthly_keyword() -> None:
     draft = _fallback_draft("每月15号晚上8点汇总服务投诉趋势")
 

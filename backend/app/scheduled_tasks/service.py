@@ -45,7 +45,7 @@ LEASE_SECONDS = 15 * 60
 WORKER_SLEEP_SECONDS = 5
 SCHEDULE_TYPES = {"once", "daily", "weekly", "monthly"}
 WEEKDAY_MAP = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
-WEEKDAY_MARKER_PATTERN = re.compile(r"周[一二三四五六日天]")
+WEEKDAY_MARKER_PATTERN = re.compile(r"(?:周|星期)([一二三四五六日天])")
 WEEKLY_MARKERS = ("每周", "每星期", "星期")
 MONTHLY_MARKERS = ("每月", "每个月")
 ONCE_MARKERS = ("一次", "今天", "今晚", "明天", "明晚", "后天")
@@ -743,12 +743,7 @@ def _adjust_basic_hour(message: str, hour: int) -> int:
 
 
 def _extract_basic_weekdays(message: str) -> list[int]:
-    values = [
-        value
-        for key, value in WEEKDAY_MAP.items()
-        if f"周{key}" in message or f"星期{key}" in message
-    ]
-    return sorted(set(values))
+    return sorted({WEEKDAY_MAP[match.group(1)] for match in WEEKDAY_MARKER_PATTERN.finditer(message)})
 
 
 def _extract_basic_monthday(message: str) -> int | None:

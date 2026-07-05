@@ -285,7 +285,7 @@ def test_inactive_bound_skill_can_be_loaded_and_saved_from_management_api() -> N
         db.commit()
 
         copy_overall_scope_to_agent(db, "tenant_demo", agent)
-        branch = db.exec(
+        db.exec(
             select(AgentSkillBranch).where(
                 AgentSkillBranch.tenant_id == "tenant_demo",
                 AgentSkillBranch.agent_id == agent.id,

@@ -98,6 +98,7 @@ type ComposerAttachment = ChatAttachmentRead & {
   uploadKey: string;
 };
 type ComposerInteractionMode = 'normal' | 'scheduled_task';
+type DraftScheduleType = 'once' | 'daily' | 'weekly' | 'monthly';
 const MODEL_CONFIG_STORAGE_PREFIX = 'skill_agent_selected_model_config';
 const SESSION_READ_STORAGE_PREFIX = 'skill_agent_session_read_at';
 const RUNNING_EVENT_RECOVERY_WINDOW_MS = 5 * 60 * 1000;
@@ -105,6 +106,14 @@ const CHAT_STREAM_IDLE_TIMEOUT_MS = 90 * 1000;
 const CHAT_TRACE_RECOVERY_WINDOW_MS = 10 * 60 * 1000;
 const STREAM_TERMINAL_EVENTS = new Set(['complete', 'done', 'stream_end', 'stream_cancelled', 'error']);
 const HIDDEN_GENERAL_SKILL_TRACE_PHASES = new Set(['replying']);
+const DRAFT_SCHEDULE_TYPES = new Set<DraftScheduleType>(['once', 'daily', 'weekly', 'monthly']);
+const DRAFT_SCHEDULE_TYPE_LABELS: Record<DraftScheduleType, string> = {
+  once: '一次性',
+  daily: '每天',
+  weekly: '每周',
+  monthly: '每月',
+};
+const DRAFT_WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 function sessionReadStorageKey(userId: string): string {
   return `${SESSION_READ_STORAGE_PREFIX}:${userId || 'anonymous'}`;
@@ -1187,25 +1196,9 @@ function ScheduledDraftCard({
   };
   const updateScheduleType = (value: ScheduledTaskDraftRead['schedule_type']) => {
     setEditableDraft((current) => {
-      const currentSchedule = current.schedule || {};
-      const time = String(currentSchedule.time || '09:00');
-      let schedule: Record<string, unknown>;
-      if (value === 'once') {
-        schedule = { run_at: String(currentSchedule.run_at || '') };
-      } else if (value === 'weekly') {
-        schedule = {
-          time,
-          weekdays: Array.isArray(currentSchedule.weekdays) ? currentSchedule.weekdays : [0],
-        };
-      } else if (value === 'monthly') {
-        schedule = {
-          time,
-          day_of_month: currentSchedule.day_of_month || 1,
-        };
-      } else {
-        schedule = { time };
-      }
-      return { ...current, schedule_type: value, schedule };
+      const scheduleType = normalizeDraftScheduleType(value);
+      const schedule = draftScheduleForType(current.schedule || {}, scheduleType);
+      return { ...current, schedule_type: scheduleType, schedule };
     });
   };
   const updateScheduleValue = (value: string) => {
@@ -4616,16 +4609,17 @@ function formatAttachmentSize(size: number): string {
 
 function formatDraftSchedule(draft: ScheduledTaskDraftRead): string {
   const schedule = draft.schedule || {};
-  if (draft.schedule_type === 'weekly') {
+  const scheduleType = normalizeDraftScheduleType(draft.schedule_type);
+  if (scheduleType === 'weekly') {
     const weekdays = Array.isArray(schedule.weekdays)
-      ? schedule.weekdays.map((item) => ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][Number(item)]).filter(Boolean).join('、')
+      ? schedule.weekdays.map((item) => DRAFT_WEEKDAY_LABELS[Number(item)]).filter(Boolean).join('、')
       : '周一';
     return `每周 ${weekdays} ${schedule.time || '09:00'}`;
   }
-  if (draft.schedule_type === 'monthly') {
+  if (scheduleType === 'monthly') {
     return `每月 ${schedule.day_of_month || 1} 号 ${schedule.time || '09:00'}`;
   }
-  if (draft.schedule_type === 'once') {
+  if (scheduleType === 'once') {
     const value = String(schedule.run_at || '');
     const date = value ? new Date(value) : null;
     return date && !Number.isNaN(date.getTime())
@@ -4636,21 +4630,43 @@ function formatDraftSchedule(draft: ScheduledTaskDraftRead): string {
 }
 
 function scheduleTypeLabel(type: ScheduledTaskDraftRead['schedule_type']): string {
-  if (type === 'once') return '一次性';
-  if (type === 'weekly') return '每周';
-  if (type === 'monthly') return '每月';
-  return '每天';
+  return DRAFT_SCHEDULE_TYPE_LABELS[normalizeDraftScheduleType(type)];
 }
 
 function scheduleEditValue(draft: ScheduledTaskDraftRead): string {
   const schedule = draft.schedule || {};
-  if (draft.schedule_type === 'once') return String(schedule.run_at || '');
+  if (normalizeDraftScheduleType(draft.schedule_type) === 'once') return String(schedule.run_at || '');
   return String(schedule.time || '09:00');
 }
 
 function scheduleFromEditValue(draft: ScheduledTaskDraftRead, value: string): Record<string, unknown> {
-  if (draft.schedule_type === 'once') {
+  if (normalizeDraftScheduleType(draft.schedule_type) === 'once') {
     return { ...(draft.schedule || {}), run_at: value };
   }
   return { ...(draft.schedule || {}), time: value };
+}
+
+function draftScheduleForType(schedule: Record<string, unknown>, type: DraftScheduleType): Record<string, unknown> {
+  const time = String(schedule.time || '09:00');
+  if (type === 'once') {
+    return { run_at: String(schedule.run_at || '') };
+  }
+  if (type === 'weekly') {
+    return {
+      time,
+      weekdays: Array.isArray(schedule.weekdays) ? schedule.weekdays : [0],
+    };
+  }
+  if (type === 'monthly') {
+    return {
+      time,
+      day_of_month: schedule.day_of_month || 1,
+    };
+  }
+  return { time };
+}
+
+function normalizeDraftScheduleType(value: string): DraftScheduleType {
+  const scheduleType = value as DraftScheduleType;
+  return DRAFT_SCHEDULE_TYPES.has(scheduleType) ? scheduleType : 'daily';
 }

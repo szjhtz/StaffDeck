@@ -30,34 +30,7 @@ class Router:
             "conversation_context": conversation_context or {},
             "memory_context": memory_context or [],
             "current_session": public_session(session).model_dump(),
-            "available_skills": [
-                {
-                    "skill_id": skill.skill_id,
-                    "name": skill.name,
-                    "description": skill.description,
-                    "business_domain": skill.content_json.get("business_domain"),
-                    "trigger_intents": skill.content_json.get("trigger_intents", []),
-                    "required_info": skill.content_json.get("required_info", []),
-                    "nodes": [
-                        {
-                            "node_id": node.get("node_id"),
-                            "type": node.get("type"),
-                            "name": node.get("name"),
-                            "instruction": node.get("instruction"),
-                            "optional": node.get("optional"),
-                            "condition": node.get("condition"),
-                            "expected_user_info": node.get("expected_user_info", []),
-                            "allowed_actions": node.get("allowed_actions", []),
-                        }
-                        for node in skill.content_json.get("nodes", [])
-                        if isinstance(node, dict)
-                    ],
-                    "edges": skill.content_json.get("edges", []),
-                    "start_node_id": skill.content_json.get("start_node_id"),
-                    "terminal_node_ids": skill.content_json.get("terminal_node_ids", []),
-                }
-                for skill in available_skills
-            ],
+            "available_skills": _available_skill_payloads(available_skills),
         }
         try:
             raw = LLMClient(model_config).generate_json(PROMPT_PATH.read_text(encoding="utf-8"), payload)
@@ -87,34 +60,7 @@ class Router:
             "memory_context": memory_context or [],
             "current_session": public_session(session).model_dump(),
             "candidate_task_frames": candidate_frames,
-            "available_skills": [
-                {
-                    "skill_id": skill.skill_id,
-                    "name": skill.name,
-                    "description": skill.description,
-                    "business_domain": skill.content_json.get("business_domain"),
-                    "trigger_intents": skill.content_json.get("trigger_intents", []),
-                    "required_info": skill.content_json.get("required_info", []),
-                    "nodes": [
-                        {
-                            "node_id": node.get("node_id"),
-                            "type": node.get("type"),
-                            "name": node.get("name"),
-                            "instruction": node.get("instruction"),
-                            "optional": node.get("optional"),
-                            "condition": node.get("condition"),
-                            "expected_user_info": node.get("expected_user_info", []),
-                            "allowed_actions": node.get("allowed_actions", []),
-                        }
-                        for node in skill.content_json.get("nodes", [])
-                        if isinstance(node, dict)
-                    ],
-                    "edges": skill.content_json.get("edges", []),
-                    "start_node_id": skill.content_json.get("start_node_id"),
-                    "terminal_node_ids": skill.content_json.get("terminal_node_ids", []),
-                }
-                for skill in available_skills
-            ],
+            "available_skills": _available_skill_payloads(available_skills),
         }
         try:
             raw = LLMClient(model_config).generate_json(
@@ -302,3 +248,36 @@ def _first_node_id(skill: Skill) -> str | None:
             if isinstance(node, dict) and node.get("node_id"):
                 return str(node["node_id"])
     return None
+
+
+def _available_skill_payloads(available_skills: list[Skill]) -> list[dict[str, Any]]:
+    return [_skill_payload(skill) for skill in available_skills]
+
+
+def _skill_payload(skill: Skill) -> dict[str, Any]:
+    content = skill.content_json or {}
+    return {
+        "skill_id": skill.skill_id,
+        "name": skill.name,
+        "description": skill.description,
+        "business_domain": content.get("business_domain"),
+        "trigger_intents": content.get("trigger_intents", []),
+        "required_info": content.get("required_info", []),
+        "nodes": [
+            {
+                "node_id": node.get("node_id"),
+                "type": node.get("type"),
+                "name": node.get("name"),
+                "instruction": node.get("instruction"),
+                "optional": node.get("optional"),
+                "condition": node.get("condition"),
+                "expected_user_info": node.get("expected_user_info", []),
+                "allowed_actions": node.get("allowed_actions", []),
+            }
+            for node in content.get("nodes", [])
+            if isinstance(node, dict)
+        ],
+        "edges": content.get("edges", []),
+        "start_node_id": content.get("start_node_id"),
+        "terminal_node_ids": content.get("terminal_node_ids", []),
+    }
