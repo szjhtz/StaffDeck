@@ -14,6 +14,8 @@ const ACCENT_STYLES: Record<PlatformResourceAccent, { meta: string; tag: string 
   orange: { meta: 'text-[#ff7f00]', tag: 'bg-[#fff2e5] text-[#ff7f00] dark:bg-[#ff7f00]/15' },
 };
 
+export const platformResourceAccentStyles = ACCENT_STYLES;
+
 export type PlatformResourceCardProps = {
   title: ReactNode;
   /** Accent metric line under the title, e.g. "12M / 6个片段". */

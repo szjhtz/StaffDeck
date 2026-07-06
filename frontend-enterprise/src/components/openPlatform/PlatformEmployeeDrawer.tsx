@@ -175,13 +175,13 @@ export default function PlatformEmployeeDrawer({
           </div>
 
           <div className="grid grid-cols-2 gap-[10px]">
-            <div className="flex h-[60px] flex-col justify-center gap-[4px] rounded-[14px] border-[0.5px] border-[#e3e7f1] px-[16px] py-[14px] dark:border-[#343741]">
-              <span className="text-[10px] text-[#464c5e] dark:text-[#a8afbd]">分类</span>
-              <strong className="truncate text-[12px] font-medium text-[#18181a] dark:text-[#f0f2f6]">{platformTitle}</strong>
+            <div className="flex min-h-[60px] flex-col justify-center gap-[4px] rounded-[14px] border-[0.5px] border-[#e3e7f1] px-[16px] py-[8px] dark:border-[#343741]">
+              <span className="text-[10px] leading-[13px] text-[#464c5e] dark:text-[#a8afbd]">分类</span>
+              <strong className="truncate text-[12px] leading-[16px] font-medium text-[#18181a] dark:text-[#f0f2f6]">{platformTitle}</strong>
             </div>
-            <div className="flex h-[60px] flex-col justify-center gap-[4px] rounded-[14px] border-[0.5px] border-[#e3e7f1] px-[16px] py-[14px] dark:border-[#343741]">
-              <span className="text-[10px] text-[#464c5e] dark:text-[#a8afbd]">分类</span>
-              <strong className="truncate text-[12px] font-medium text-[#18181a] dark:text-[#f0f2f6]">{role}</strong>
+            <div className="flex min-h-[60px] flex-col justify-center gap-[4px] rounded-[14px] border-[0.5px] border-[#e3e7f1] px-[16px] py-[8px] dark:border-[#343741]">
+              <span className="text-[10px] leading-[13px] text-[#464c5e] dark:text-[#a8afbd]">分类</span>
+              <strong className="truncate text-[12px] leading-[16px] font-medium text-[#18181a] dark:text-[#f0f2f6]">{role}</strong>
             </div>
           </div>
 

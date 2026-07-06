@@ -1,5 +1,4 @@
 import {
-  DeleteOutlined,
   FileSearchOutlined,
   ProfileOutlined,
   RightOutlined,
@@ -7,7 +6,7 @@ import {
   ToolOutlined,
   UsergroupAddOutlined,
 } from '../icons';
-import { Button as UIButton, Sheet, SheetContent, notify } from '@/components/ui';
+import { Button as UIButton, notify } from '@/components/ui';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import type { ComponentType, ReactNode, SVGProps } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -33,6 +32,7 @@ import {
   PlatformEmployeeCard,
   PlatformEmployeeDrawer,
   PlatformResourceCard,
+  PlatformResourceDrawer,
   type PlatformResourceAccent,
   type PlatformStat,
 } from '@/components/openPlatform';
@@ -154,6 +154,14 @@ function employeeStats(agent: AgentProfileRead): PlatformStat[] {
     { value: resourceCount(agent, 'general_skill'), label: '技能' },
     { value: resourceCount(agent, 'skill'), label: 'SOP' },
   ];
+}
+
+function resourceDrawerBadge(kind: PlatformKind, item: PlatformItem): string {
+  if (kind === 'skills') {
+    const parts = item.meta.split(' / ');
+    return parts[parts.length - 1] || item.tags[0] || '';
+  }
+  return item.tags[0] || '';
 }
 
 export default function OpenPlatformPage({
@@ -413,63 +421,32 @@ export default function OpenPlatformPage({
     }
 
     return (
-      <Sheet open onOpenChange={(next) => { if (!next) setDetailItem(null); }}>
-        <SheetContent
-          side="right"
-          className="open-platform-item-drawer flex w-[560px] flex-col gap-0 p-0 sm:max-w-[560px]"
-        >
-          <div className="grid min-h-0 flex-1 content-start gap-[18px] overflow-auto p-[24px]">
-            <div className="open-platform-drawer-hero">
-              {item.agent ? <EmployeeAvatar agent={item.agent} size={64} /> : <span className="open-platform-resource-icon">{config.icon}</span>}
-              <div>
-                <span className="ant-typography block text-[12px] text-muted-foreground">{config.title}</span>
-                <h3 className="ant-typography text-[18px] font-semibold text-foreground">{item.title}</h3>
-                <p className="ant-typography text-[13px] text-muted-foreground">{item.description}</p>
-              </div>
-            </div>
-            <div className="open-platform-drawer-meta-grid">
-              <div>
-                <span>来源</span>
-                <strong>{config.title}</strong>
-              </div>
-              <div>
-                <span>分类</span>
-                <strong>{item.meta}</strong>
-              </div>
-            </div>
-            <div className="open-platform-drawer-tags">
-              {item.tags.map((tag) => <PlatformTag key={tag}>{tag}</PlatformTag>)}
-            </div>
-            <div className="open-platform-drawer-summary">
-              <span className="ant-typography">说明</span>
-              <p>{config.detail}</p>
-            </div>
-          </div>
-          <div className="flex justify-end gap-[10px] border-t border-border bg-(--surface) px-[20px] py-[14px]">
-            {canManagePlatform && (
-              <UIButton
-                variant="outline"
-                disabled={deletingItemKey === deleteKey}
-                onClick={() => setConfirmTarget({ kind: detailItem.kind, item })}
-                className="rounded-[10px] border-[#f3b6b6] bg-white text-[#d20b0b] hover:border-[#d20b0b] hover:bg-[#fce7e7] hover:text-[#d20b0b] dark:border-[#d20b0b]/40 dark:bg-transparent dark:text-[#ff6b6b] dark:hover:bg-[#d20b0b]/20"
-              >
-                <DeleteOutlined />
-                删除
-              </UIButton>
-            )}
-            <UIButton variant="outline" className="rounded-[10px]" onClick={() => setDetailItem(null)}>关闭</UIButton>
-            <UIButton
-              className="rounded-[10px]"
-              onClick={() => {
-                setDetailItem(null);
-                usePlatformItem(detailItem.kind, item.id);
-              }}
-            >
-              {config.useLabel}
-            </UIButton>
-          </div>
-        </SheetContent>
-      </Sheet>
+      <PlatformResourceDrawer
+        open
+        platformTitle={config.title}
+        icon={PLATFORM_RESOURCE_ICON[detailItem.kind]
+          ? <img src={PLATFORM_RESOURCE_ICON[detailItem.kind]} alt="" className="size-[36px] object-contain" />
+          : <span className="grid size-[36px] place-items-center text-[#757f9c]">{config.icon}</span>}
+        accent={PLATFORM_ACCENT[detailItem.kind]}
+        title={item.title}
+        description={item.description}
+        badge={resourceDrawerBadge(detailItem.kind, item)}
+        categoryMeta={item.meta}
+        detailText={config.detail}
+        useLabel={config.useLabel}
+        canManage={canManagePlatform}
+        deleting={deletingItemKey === deleteKey}
+        hasPrev={drawerIndex > 0}
+        hasNext={drawerIndex >= 0 && drawerIndex < drawerItems.length - 1}
+        onClose={() => setDetailItem(null)}
+        onPrev={() => navigateDetailItem(-1)}
+        onNext={() => navigateDetailItem(1)}
+        onDelete={() => setConfirmTarget({ kind: detailItem.kind, item })}
+        onUse={() => {
+          setDetailItem(null);
+          usePlatformItem(detailItem.kind, item.id);
+        }}
+      />
     );
   }
 

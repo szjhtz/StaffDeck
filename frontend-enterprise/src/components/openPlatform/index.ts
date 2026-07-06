@@ -6,3 +6,6 @@ export { default as PlatformEmployeeDrawer } from './PlatformEmployeeDrawer';
 export type { PlatformEmployeeDrawerProps } from './PlatformEmployeeDrawer';
 export { default as PlatformResourceCard } from './PlatformResourceCard';
 export type { PlatformResourceCardProps, PlatformResourceAccent } from './PlatformResourceCard';
+export { platformResourceAccentStyles } from './PlatformResourceCard';
+export { default as PlatformResourceDrawer } from './PlatformResourceDrawer';
+export type { PlatformResourceDrawerProps } from './PlatformResourceDrawer';
