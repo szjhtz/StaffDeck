@@ -1,12 +1,11 @@
 import {
   FileSearchOutlined,
   ProfileOutlined,
-  RightOutlined,
   SolutionOutlined,
   ToolOutlined,
   UsergroupAddOutlined,
 } from '../icons';
-import { Button as UIButton, notify } from '@/components/ui';
+import { notify } from '@/components/ui';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import type { ComponentType, ReactNode, SVGProps } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -31,6 +30,7 @@ import {
   PlatformColumn,
   PlatformEmployeeCard,
   PlatformEmployeeDrawer,
+  PlatformKindDetailView,
   PlatformResourceCard,
   PlatformResourceDrawer,
   type PlatformResourceAccent,
@@ -468,52 +468,28 @@ export default function OpenPlatformPage({
 
   if (selectedKind) {
     const config = PLATFORM_BY_KIND.get(selectedKind) || PLATFORM_CONFIGS[0];
-    const items = platformItems[selectedKind];
+    const PlatformIcon = PLATFORM_ICON[selectedKind];
     return (
-      <div className="page open-platform-page">
-        <div className="open-platform-detail-hero">
-          <div>
-            <span className="ant-typography block text-[12px] text-muted-foreground">开放广场 / {config.title}</span>
-            <h2 className="ant-typography text-[22px] font-semibold text-foreground">{config.title}</h2>
-            <p className="ant-typography text-[13px] text-muted-foreground">{config.detail}</p>
-          </div>
-          <UIButton variant="outline" onClick={() => navigate('/enterprise/platform')}>返回平台</UIButton>
-        </div>
-        <div className="open-platform-detail-card">
-          <div className="ant-card-body">
-            {loading ? (
-              <div className="py-[40px] text-center text-[13px] text-muted-foreground">加载中…</div>
-            ) : items.length === 0 ? (
-              <div className="py-[40px] text-center text-[13px] text-muted-foreground">暂无开放内容</div>
-            ) : (
-              <div className="open-platform-resource-grid">
-                {items.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`open-platform-resource-card${item.agent ? ' is-agent' : ''}`}
-                    onClick={() => setDetailItem({ kind: selectedKind, item })}
-                  >
-                    {item.agent && <EmployeeAvatar agent={item.agent} size={48} />}
-                    {!item.agent && <span className="open-platform-resource-icon">{config.icon}</span>}
-                    <span className="open-platform-resource-copy">
-                      <strong>{item.title}</strong>
-                      <em>{item.meta}</em>
-                      <span>{item.description}</span>
-                      <span className="open-platform-tags">
-                        {item.tags.slice(0, 3).map((tag) => <PlatformTag key={tag}>{tag}</PlatformTag>)}
-                      </span>
-                    </span>
-                    <span className="open-platform-use">查看详情 <RightOutlined /></span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+      <>
+        <PlatformKindDetailView
+          kind={selectedKind}
+          title={config.title}
+          subtitle={config.subtitle}
+          countLabel={platformCountLabel(selectedKind)}
+          signals={config.signals}
+          icon={PlatformIcon}
+          items={platformItems[selectedKind]}
+          loading={loading}
+          employeeStats={employeeStats}
+          onBack={() => navigate('/enterprise/platform')}
+          onRefresh={() => void loadPlatformData()}
+          onOpenItem={(item) => setDetailItem({ kind: selectedKind, item })}
+          onLogout={onLogout}
+          userName={currentUser?.username}
+        />
         {renderItemDrawer()}
         {renderConfirm()}
-      </div>
+      </>
     );
   }
 
@@ -586,14 +562,6 @@ export default function OpenPlatformPage({
       {renderItemDrawer()}
       {renderConfirm()}
     </div>
-  );
-}
-
-function PlatformTag({ children }: { children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-full border border-[#e3e7f1] bg-[#fafafa] px-[8px] py-px text-[12px] font-bold text-[#464c5e] dark:border-border dark:bg-white/5 dark:text-muted-foreground">
-      {children}
-    </span>
   );
 }
 
