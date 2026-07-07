@@ -9,7 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { employeeDisplayName, employeeProfile } from '@/employee';
+import { employeeDisplayNameWithCreator, employeeProfile } from '@/employee';
 
 import {
   CHAT_CITATION_DETAIL_CLASS,
@@ -82,7 +82,7 @@ export default function ChatDialogs({ chat }: { chat: UseChatSession }) {
                     <div className={CHAT_HANDOFF_HEAD_CLASS}>
                       {profile ? <EmployeeAvatar profile={profile} size={36} radius={10} /> : null}
                       <div>
-                        <strong>{handoffAgent ? employeeDisplayName(handoffAgent) : '数字员工'}</strong>
+                        <strong>{handoffAgent ? employeeDisplayNameWithCreator(handoffAgent) : '数字员工'}</strong>
                         <span>需要人工接续</span>
                       </div>
                     </div>

@@ -25,6 +25,7 @@ import { clearEnterpriseAuthSession, getEnterpriseAuthSession } from '@/auth';
 import {
   agentResourceCount,
   employeeDisplayName,
+  employeeDisplayNameWithCreator,
   employeeProfile,
   visibleChatEmployees,
 } from '@/employee';
@@ -433,7 +434,7 @@ export function useChatSession() {
       { value: 'all', label: `全部会话 · ${sessions.length}` },
       ...rows.map((agent) => ({
         value: agent.id,
-        label: `${employeeDisplayName(agent)} · ${counts.get(agent.id) || 0}`,
+        label: `${employeeDisplayNameWithCreator(agent)} · ${counts.get(agent.id) || 0}`,
       })),
     ];
   }, [availableAgents, sessions]);

@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils';
 import EmployeeAvatar from './EmployeeAvatar';
 import BrandLogo from './BrandLogo';
 import StaffdeckIcon from './StaffdeckIcon';
-import { employeeDisplayName, employeeProfile, staffdeckDisplayText } from '../employee';
+import { employeeDisplayNameWithCreator, employeeProfile, staffdeckDisplayText } from '../employee';
 import { EnterpriseRoute } from '../enums/routes';
 import type { AgentProfileRead, ChatSession } from '../types';
 import IconPlatform from '../assets/icons/nav-platform.svg?react';
@@ -204,7 +204,7 @@ function AgentSwitcher({
   const nameLabel = sidebarAgent
     ? sidebarAgent.is_overall
       ? '开放广场'
-      : employeeDisplayName(sidebarAgent)
+      : employeeDisplayNameWithCreator(sidebarAgent)
     : '-';
 
   return (
@@ -252,7 +252,7 @@ function AgentSwitcher({
             <EmployeeAvatar agent={agent} size={28} />
             <span className="flex min-w-0 flex-col">
               <strong className="truncate text-[12px] font-medium">
-                {agent.is_overall ? '开放广场' : employeeDisplayName(agent)}
+                {agent.is_overall ? '开放广场' : employeeDisplayNameWithCreator(agent)}
               </strong>
               <small className="truncate text-[10px] text-muted-foreground">
                 {agent.is_overall ? '平台' : employeeProfile(agent).roleName}
@@ -384,7 +384,7 @@ function CollapsedAgentSwitcher({
             <EmployeeAvatar agent={agent} size={28} />
             <span className="flex min-w-0 flex-col">
               <strong className="truncate text-[12px] font-medium">
-                {agent.is_overall ? '开放广场' : employeeDisplayName(agent)}
+                {agent.is_overall ? '开放广场' : employeeDisplayNameWithCreator(agent)}
               </strong>
               <small className="truncate text-[10px] text-muted-foreground">
                 {agent.is_overall ? '平台' : employeeProfile(agent).roleName}
@@ -414,7 +414,7 @@ function CollapsedSidebar({
   const nameLabel = sidebarAgent
     ? sidebarAgent.is_overall
       ? '开放广场'
-      : employeeDisplayName(sidebarAgent)
+      : employeeDisplayNameWithCreator(sidebarAgent)
     : '未选择';
   const primaryItems = primaryNavItems(isAdmin);
 

@@ -16,7 +16,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import EmployeeAvatarEditor from '../components/EmployeeAvatarEditor';
 import EmployeeCard from '../components/EmployeeCard';
 import EmployeeProfileEditor from '../components/EmployeeProfileEditor';
-import { canManageEmployeeAgent, employeeDisplayName, employeeProfile } from '../employee';
+import { canManageEmployeeAgent, employeeDisplayName, employeeDisplayNameWithCreator, employeeProfile } from '../employee';
 import type { AgentProfileRead } from '../types';
 
 const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
@@ -95,6 +95,7 @@ export default function AgentsPage({
     if (!keyword) return true;
     return [
       employeeDisplayName(item),
+      employeeDisplayNameWithCreator(item),
       profile.roleName,
       item.description || '',
       profile.workStyles.join(' '),

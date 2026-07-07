@@ -17,6 +17,7 @@ import EmployeeProfileEditor from '../components/EmployeeProfileEditor';
 import {
   canManageEmployeeAgent,
   employeeDisplayName,
+  employeeDisplayNameWithCreator,
   employeeProfile,
   visibleEmployeeAgents,
 } from '../employee';
@@ -91,6 +92,7 @@ export default function EmployeeGalleryPage({
     if (!keyword) return true;
     return [
       employeeDisplayName(item),
+      employeeDisplayNameWithCreator(item),
       profile.roleName,
       item.description || '',
       profile.workStyles.join(' '),

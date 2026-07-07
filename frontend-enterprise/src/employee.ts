@@ -242,6 +242,37 @@ function stringFromMeta(metadata: Record<string, unknown>, key: string): string 
   return typeof value === 'string' ? value : '';
 }
 
+function firstString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+export function creatorNameFromMetadata(
+  metadata?: Record<string, unknown> | null,
+  fallback = '系统',
+): string {
+  const meta = metadata || {};
+  return firstString(
+    meta.created_by_display_name,
+    meta.created_by_username,
+    meta.owner_display_name,
+    meta.owner_username,
+    meta.gallery_published_by,
+    meta.created_by_user_id,
+    meta.owner_user_id,
+  ) || fallback;
+}
+
+export function displayNameWithCreator(name: string, creator?: string): string {
+  const cleanName = name.trim() || '未命名';
+  const cleanCreator = (creator || '').trim();
+  if (!cleanCreator) return cleanName;
+  if (cleanName.endsWith(`@${cleanCreator}`) || cleanName.includes(` @${cleanCreator}`)) return cleanName;
+  return `${cleanName} @${cleanCreator}`;
+}
+
 export function employeeProfile(agent?: AgentProfileRead | null): EmployeeProfile {
   const metadata = agent?.metadata || {};
   const isBlankOnboarding = metadata.blank_onboarding === true;
@@ -274,6 +305,25 @@ export function employeeDisplayName(agent?: AgentProfileRead | null): string {
   if (!agent) return '数字员工';
   if (agent.is_overall) return '开放广场';
   return staffdeckDisplayText((agent.name || '数字员工').replace(/智能体/g, '员工'));
+}
+
+export function employeeCreatorName(agent?: AgentProfileRead | null): string {
+  return creatorNameFromMetadata(agent?.metadata);
+}
+
+export function employeeDisplayNameWithCreator(agent?: AgentProfileRead | null): string {
+  return displayNameWithCreator(employeeDisplayName(agent), employeeCreatorName(agent));
+}
+
+export function resourceCreatorName(resource?: { metadata?: Record<string, unknown> } | null): string {
+  return creatorNameFromMetadata(resource?.metadata);
+}
+
+export function resourceDisplayNameWithCreator(
+  name: string,
+  resource?: { metadata?: Record<string, unknown> } | null,
+): string {
+  return displayNameWithCreator(name, resourceCreatorName(resource));
 }
 
 export function resourceCount(resources: AgentResourceBindingRead[] | undefined, type: AgentResourceBindingRead['resource_type']): number {

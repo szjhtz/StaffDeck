@@ -22,7 +22,13 @@ import plazaKnowledgeIcon from '../assets/icons/plaza-knowledge.svg';
 import plazaSkillIcon from '../assets/icons/plaza-skill.svg';
 import plazaSopIcon from '../assets/icons/plaza-sop.svg';
 import plazaToolIcon from '../assets/icons/plaza-tool.svg';
-import { canManageEmployeeAgent, employeeDisplayName, employeeProfile } from '../employee';
+import {
+  canManageEmployeeAgent,
+  displayNameWithCreator,
+  employeeDisplayNameWithCreator,
+  employeeProfile,
+  resourceDisplayNameWithCreator,
+} from '../employee';
 import type { AgentProfileRead, GeneralSkillRead, KnowledgeBaseRead, SkillRead, ToolRead } from '../types';
 
 import AppHeader from '@/components/AppHeader';
@@ -245,7 +251,7 @@ export default function OpenPlatformPage({
       return {
         id: item.id,
         deleteKey: item.id,
-        title: employeeDisplayName(item),
+        title: employeeDisplayNameWithCreator(item),
         description: item.description || '广场开放的数字员工。',
         meta: profile.roleName,
         tags: [
@@ -261,9 +267,9 @@ export default function OpenPlatformPage({
       .map((item) => ({
         id: item.id,
         deleteKey: item.id,
-        title: item.name,
+        title: resourceDisplayNameWithCreator(item.name, item),
         description: item.description || '广场沉淀的知识库。',
-        meta: `${item.document_count} 文档 / ${item.bucket_count} 桶 / ${item.chunk_count} 片段`,
+        meta: `${item.document_count} 文档 / ${item.bucket_count} 目录 / ${item.chunk_count} 引用`,
         tags: [item.version || 'v1.0.0', item.branch_sync_state || '广场版'],
       })),
     'general-skills': generalSkills
@@ -271,7 +277,7 @@ export default function OpenPlatformPage({
       .map((item) => ({
         id: item.id,
         deleteKey: item.slug,
-        title: item.name,
+        title: resourceDisplayNameWithCreator(item.name, item),
         description: item.description || '可复制到当前数字员工的技能。',
         meta: item.slug,
         tags: [item.homepage ? '外部能力' : '内置能力', '已启用'],
@@ -281,7 +287,7 @@ export default function OpenPlatformPage({
       .map((item) => ({
         id: item.id,
         deleteKey: item.id,
-        title: item.name,
+        title: displayNameWithCreator(item.name, '系统'),
         description: item.description || '可复制和复用的业务 SOP。',
         meta: `${item.skill_id} / ${item.version}`,
         tags: [item.business_domain || '业务流程', `${item.total_call_count || item.call_count || 0} 次调用`],
@@ -291,7 +297,7 @@ export default function OpenPlatformPage({
       .map((item) => ({
         id: item.id,
         deleteKey: item.id,
-        title: item.display_name || item.name,
+        title: displayNameWithCreator(item.display_name || item.name, '系统'),
         description: item.description || '可配置到员工工具的工具。',
         meta: `${item.bucket || '工具'} / ${item.tool_type.toUpperCase()}`,
         tags: [item.method, item.enabled ? '已启用' : '已停用'],

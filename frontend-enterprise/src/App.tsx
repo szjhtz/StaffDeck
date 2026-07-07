@@ -24,6 +24,7 @@ import {
   canAccessEmployeeAgent,
   canManageEmployeeAgent,
   employeeDisplayName,
+  employeeDisplayNameWithCreator,
   employeeProfile,
   preferredEmployeeAgent,
 } from "./employee";
@@ -652,7 +653,7 @@ function Shell({
                       <SelectItem key={agent.id} value={agent.id}>
                         {agent.is_overall
                           ? "开放广场"
-                          : `${employeeDisplayName(agent)} · ${employeeProfile(agent).roleName}${isGalleryEmployee(agent) ? " · 广场" : ""}`}
+                          : `${employeeDisplayNameWithCreator(agent)} · ${employeeProfile(agent).roleName}${isGalleryEmployee(agent) ? " · 广场" : ""}`}
                       </SelectItem>
                     ))}
                   </SelectContent>

@@ -848,31 +848,18 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
       render: (row) => statusTag(row.status),
     },
     {
-      key: 'version',
-      title: '版本',
-      width: 88,
-      render: (row) => (row.version ? `v${row.version}` : '-'),
-    },
-    {
-      key: 'documents',
-      title: '文档',
-      width: 72,
-      align: 'center',
-      render: (row) => row.document_count ?? 0,
-    },
-    {
-      key: 'buckets',
-      title: '目录',
-      width: 72,
-      align: 'center',
-      render: (row) => row.bucket_count ?? 0,
-    },
-    {
-      key: 'chunks',
-      title: '引用',
-      width: 72,
-      align: 'center',
-      render: (row) => row.chunk_count ?? 0,
+      key: 'content_stats',
+      title: '版本与内容',
+      width: 260,
+      className: 'whitespace-normal',
+      render: (row) => (
+        <div className="flex min-w-0 flex-wrap items-center gap-[6px]">
+          {row.version ? <KTag>v{row.version}</KTag> : <KTag>无版本</KTag>}
+          <KTag>{row.document_count ?? 0} 文档</KTag>
+          <KTag>{row.bucket_count ?? 0} 目录</KTag>
+          <KTag>{row.chunk_count ?? 0} 引用</KTag>
+        </div>
+      ),
     },
     {
       key: 'actions',
@@ -907,6 +894,7 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
         {item.version ? <KTag>v{item.version}</KTag> : null}
         <KTag>{item.document_count} 文档</KTag>
         <KTag>{item.bucket_count} 目录</KTag>
+        <KTag>{item.chunk_count} 引用</KTag>
       </div>
     </article>
   );

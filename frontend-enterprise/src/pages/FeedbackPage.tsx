@@ -23,10 +23,12 @@ import { formatDateTime } from '@/lib/enterprise-ui';
 import { api, TENANT_ID } from '../api/client';
 import IconRefresh from '../assets/icons/refresh.svg?react';
 import type { EnterpriseAuthUser } from '../auth';
+import { employeeDisplayNameWithCreator } from '../employee';
 import { useClientPagination } from '../hooks/useClientPagination';
 import { StatusBadge } from './scheduled-tasks/StatusBadge';
 import type { BadgeTone } from './scheduled-tasks/shared';
 import type {
+  AgentProfileRead,
   EnterpriseChatSessionRead,
   EnterpriseSessionDetailRead,
   FeedbackAnalysisRead,
@@ -85,6 +87,7 @@ export default function FeedbackPage({
   const [sessions, setSessions] = useState<EnterpriseChatSessionRead[]>([]);
   const [downRows, setDownRows] = useState<FeedbackSessionRead[]>([]);
   const [upRows, setUpRows] = useState<FeedbackSessionRead[]>([]);
+  const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [summary, setSummary] = useState<FeedbackSummaryRead | null>(null);
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [filter, setFilter] = useState<LogFilter>('all');
@@ -108,16 +111,18 @@ export default function FeedbackPage({
     setLoading(true);
     try {
       const agentQuery = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
-      const [sessionResult, downResult, upResult, summaryResult] = await Promise.all([
+      const [sessionResult, downResult, upResult, summaryResult, agentResult] = await Promise.all([
         api.get<EnterpriseChatSessionRead[]>(`/api/enterprise/sessions?tenant_id=${TENANT_ID}${agentQuery}`),
         api.get<FeedbackSessionRead[]>(`/api/enterprise/feedback/sessions?tenant_id=${TENANT_ID}&rating=down${agentQuery}`),
         api.get<FeedbackSessionRead[]>(`/api/enterprise/feedback/sessions?tenant_id=${TENANT_ID}&rating=up${agentQuery}`),
         api.get<FeedbackSummaryRead>(`/api/enterprise/feedback/summary?tenant_id=${TENANT_ID}${agentQuery}`),
+        api.get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`),
       ]);
       setSessions(sessionResult);
       setDownRows(downResult);
       setUpRows(upResult);
       setSummary(summaryResult);
+      setAgents(agentResult);
     } catch (error) {
       notify.error(error instanceof Error ? error.message : '查询对话日志失败');
     } finally {
@@ -141,6 +146,16 @@ export default function FeedbackPage({
         upFeedback: upBySession.get(session.id),
       }));
   }, [agentId, downRows, sessions, upRows]);
+
+  const agentsById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
+
+  const agentLabelFromId = (rowAgentId?: string | null): string => {
+    if (!rowAgentId) return '-';
+    const agent = agentsById.get(rowAgentId);
+    return agent ? employeeDisplayNameWithCreator(agent) : rowAgentId;
+  };
+
+  const agentLabel = (row: ConversationLogRow): string => agentLabelFromId(row.agent_id);
 
   const filteredRows = useMemo(
     () =>
@@ -228,8 +243,8 @@ export default function FeedbackPage({
     {
       key: 'agent',
       title: '数字员工',
-      width: 160,
-      render: (row) => <span className="block truncate">{row.agent_id || '-'}</span>,
+      width: 180,
+      render: (row) => <span className="block truncate" title={agentLabel(row)}>{agentLabel(row)}</span>,
     },
     {
       key: 'status',
@@ -312,7 +327,7 @@ export default function FeedbackPage({
           '-'}
       </p>
       <div className="mt-[10px] flex items-center justify-between gap-[10px] text-[12px] text-[#858b9c]">
-        <span className="truncate">{row.agent_id || '-'}</span>
+        <span className="truncate" title={agentLabel(row)}>{agentLabel(row)}</span>
         <span className="shrink-0">{formatDateTime(row.updated_at)}</span>
       </div>
       <div className="mt-[10px] flex justify-end">
@@ -422,6 +437,7 @@ export default function FeedbackPage({
 
       <FeedbackDetailDialog
         detail={detail}
+        agentLabelFromId={agentLabelFromId}
         onClose={() => setDetail(null)}
         onReanalyze={reanalyzeFeedback}
         reanalyzingId={reanalyzingId}
@@ -432,11 +448,13 @@ export default function FeedbackPage({
 
 function FeedbackDetailDialog({
   detail,
+  agentLabelFromId,
   onClose,
   onReanalyze,
   reanalyzingId,
 }: {
   detail: ConversationDetail | null;
+  agentLabelFromId: (agentId?: string | null) => string;
   onClose: () => void;
   onReanalyze: (feedbackId: string) => void;
   reanalyzingId: string | null;
@@ -460,7 +478,7 @@ function FeedbackDetailDialog({
               <DetailField label="任务 ID">
                 {String(detail.session.session_id || detail.session.id || '-')}
               </DetailField>
-              <DetailField label="数字员工">{String(detail.session.agent_id || '-')}</DetailField>
+              <DetailField label="数字员工">{agentLabelFromId(String(detail.session.agent_id || ''))}</DetailField>
               <DetailField label="用户">{displayUser(detail.session)}</DetailField>
               <DetailField label="状态">{String(detail.session.status || '-')}</DetailField>
               <DetailField label="反馈" className="col-span-2 max-[520px]:col-span-1">
