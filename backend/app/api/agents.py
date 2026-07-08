@@ -89,7 +89,10 @@ def list_agents(
         select(AgentProfile).where(AgentProfile.tenant_id == tenant_id).order_by(AgentProfile.is_overall.desc(), AgentProfile.updated_at.desc())
     ).all()
     if user and not _is_admin_user(user):
-        rows = [row for row in rows if _agent_visible_to_user(row, user)]
+        # Non-admin users still need the overall agent as a read-only open-gallery
+        # source for copy/use flows. Mutations remain guarded by manage/update
+        # endpoints, so this only exposes the source scope.
+        rows = [row for row in rows if row.is_overall or _agent_visible_to_user(row, user)]
     bindings = _bindings_by_agent(db, tenant_id)
     return [agent_read(row, bindings.get(row.id, [])) for row in rows]
 
@@ -573,7 +576,7 @@ def _agent_visible_to_user(row: AgentProfile, user: User) -> bool:
     if _is_admin_user(user):
         return True
     if row.is_overall:
-        return False
+        return True
     metadata = row.metadata_json or {}
     return _agent_owned_by_user(row, user) or metadata.get("published_to_gallery") is True
 
@@ -605,7 +608,7 @@ def _ensure_can_manage_agent(row: AgentProfile, user: User | None) -> None:
         raise HTTPException(status_code=403, detail="Only administrator can manage overall agent")
     if _agent_owned_by_user(row, user):
         return
-    raise HTTPException(status_code=403, detail="Only the creator or administrator can manage this agent")
+    raise HTTPException(status_code=403, detail="Only the creator or administrator can manage this staff")
 
 
 def _ensure_can_import_to_agent(row: AgentProfile, user: User | None) -> None:

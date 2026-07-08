@@ -19,7 +19,9 @@ from app.agents.branching import (
 )
 from app.config import get_settings
 from app.db import get_session
-from app.db.models import AgentResourceBinding, MCPServer, Tool, utc_now
+from app.db.models import AgentResourceBinding, MCPServer, Tool, User, utc_now
+from app.security.auth import get_current_user
+from app.security.permissions import ensure_agent_scope_manager, ensure_open_gallery_admin
 from app.security.tenant import ensure_tenant
 from app.tools import ToolExecutor
 from app.tools.http_request import prepare_get_request
@@ -114,6 +116,7 @@ def create_tool(
     request: ToolCreateRequest,
     agent_id: str | None = Query(default=None),
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> ToolRead:
     ensure_tenant(db, request.tenant_id)
     existing = db.exec(
@@ -121,6 +124,7 @@ def create_tool(
     ).first()
     if existing:
         raise HTTPException(status_code=409, detail="Tool name already exists for this tenant")
+    agent = ensure_agent_scope_manager(db, request.tenant_id, agent_id, current_user)
     row = Tool(
         tenant_id=request.tenant_id,
         name=request.name,
@@ -140,7 +144,6 @@ def create_tool(
     )
     db.add(row)
     db.flush()
-    agent = get_agent(db, request.tenant_id, agent_id)
     if agent and not agent.is_overall:
         ensure_private_resource_binding(
             db,
@@ -151,6 +154,7 @@ def create_tool(
             "active" if request.enabled else "inactive",
         )
     else:
+        ensure_open_gallery_admin(request.tenant_id, current_user)
         ensure_open_gallery_binding(db, request.tenant_id, "tool", row.id, "active" if request.enabled else "inactive")
     db.commit()
     db.refresh(row)
@@ -239,10 +243,13 @@ def update_tool(
     request: ToolUpdateRequest,
     agent_id: str | None = Query(default=None),
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> ToolRead:
     row = _get_tool(db, request.tenant_id, tool_id)
-    agent = get_agent(db, request.tenant_id, agent_id)
+    agent = ensure_agent_scope_manager(db, request.tenant_id, agent_id, current_user)
     _ensure_tool_visible(db, request.tenant_id, row, agent_id)
+    if not (agent and not agent.is_overall):
+        ensure_open_gallery_admin(request.tenant_id, current_user)
     row.name = request.name
     row.display_name = request.display_name
     row.description = request.description
@@ -283,9 +290,10 @@ def delete_tool(
     tenant_id: str = Query(...),
     db: Session = Depends(get_session),
     agent_id: str | None = None,
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
     row = _get_tool(db, tenant_id, tool_id)
-    agent = get_agent(db, tenant_id, agent_id)
+    agent = ensure_agent_scope_manager(db, tenant_id, agent_id, current_user)
     if agent and not agent.is_overall:
         binding = _tool_binding(db, tenant_id, agent.id, row.id)
         if binding:
@@ -298,10 +306,12 @@ def delete_tool(
     if agent and agent.is_overall:
         if not is_open_gallery_resource(db, tenant_id, "tool", row):
             raise HTTPException(status_code=404, detail="Tool not visible in open gallery")
+        ensure_open_gallery_admin(tenant_id, current_user)
         hide_open_gallery_binding(db, tenant_id, "tool", row.id)
         db.commit()
         return {"status": "hidden"}
     require_overall_agent(db, tenant_id, agent_id)
+    ensure_open_gallery_admin(tenant_id, current_user)
     db.delete(row)
     db.commit()
     return {"status": "deleted"}
@@ -494,8 +504,13 @@ def list_mcp_servers(tenant_id: str = Query(...), db: Session = Depends(get_sess
 
 
 @mcp_router.post("", response_model=MCPServerRead)
-def create_mcp_server(request: MCPServerCreateRequest, db: Session = Depends(get_session)) -> MCPServerRead:
+def create_mcp_server(
+    request: MCPServerCreateRequest,
+    db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> MCPServerRead:
     ensure_tenant(db, request.tenant_id)
+    ensure_open_gallery_admin(request.tenant_id, current_user)
     existing = db.exec(
         select(MCPServer).where(MCPServer.tenant_id == request.tenant_id, MCPServer.name == request.name)
     ).first()
@@ -534,8 +549,10 @@ def update_mcp_server(
     server_id: str,
     request: MCPServerUpdateRequest,
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> MCPServerRead:
     row = _get_mcp_server(db, request.tenant_id, server_id)
+    ensure_open_gallery_admin(request.tenant_id, current_user)
     conn = request.connection
     row.name = request.name
     row.display_name = request.display_name
@@ -563,8 +580,10 @@ def delete_mcp_server(
     db: Session = Depends(get_session),
     agent_id: str | None = None,
     remove_tools: bool = Query(default=True),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
     require_overall_agent(db, tenant_id, agent_id)
+    ensure_open_gallery_admin(tenant_id, current_user)
     row = _get_mcp_server(db, tenant_id, server_id)
     if remove_tools:
         tools = db.exec(select(Tool).where(Tool.mcp_server_id == server_id)).all()
@@ -592,9 +611,11 @@ def discover_mcp_tools(
     server_id: str,
     request: MCPDiscoverRequest,
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> MCPDiscoverResponse:
     """已保存 Server：拉取 tools/list，并标注哪些已导入为 Tool。"""
     row = _get_mcp_server(db, request.tenant_id, server_id)
+    ensure_open_gallery_admin(request.tenant_id, current_user)
     connection = request.connection or _server_connection(row)
     response = _discover_response(connection)
     if response.success:
@@ -618,9 +639,11 @@ def sync_mcp_tools(
     request: MCPSyncRequest,
     db: Session = Depends(get_session),
     agent_id: str | None = None,
+    current_user: User = Depends(get_current_user),
 ) -> MCPSyncResponse:
     """把发现到的工具落成 Tool 行（新建/更新 schema），可选择导入的子集。"""
     row = _get_mcp_server(db, request.tenant_id, server_id)
+    ensure_open_gallery_admin(request.tenant_id, current_user)
     connection = _server_connection(row)
     discovery = _discover_response(connection)
     if not discovery.success:

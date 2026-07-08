@@ -6,7 +6,7 @@ import { Copy, FlaskConical, Users } from 'lucide-react';
 import { pinyin } from 'pinyin-pro';
 
 import { api, TENANT_ID } from '../api/client';
-import type { EnterpriseAuthUser } from '../auth';
+import { isEnterpriseAdmin, type EnterpriseAuthUser } from '../auth';
 import AppHeader from '@/components/AppHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable, type DataTableColumn } from '@/components/DataTable';
@@ -125,6 +125,11 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
 
   const pageTitle = isOverallAgent ? '工具广场' : '工具';
   const listLabel = isOverallAgent ? '工具广场列表' : '员工工具';
+  const currentAgent = useMemo(() => agents.find((item) => item.id === agentId), [agents, agentId]);
+  const canManageCurrentScope = currentAgent
+    ? canManageEmployeeAgent(currentAgent, currentUser)
+    : isEnterpriseAdmin(currentUser) && isOverallAgent;
+  const canOpenCreateMenu = canManageCurrentScope || !isOverallAgent;
 
   const agentQuery = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
   const load = () => {
@@ -411,7 +416,7 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
           <IconMore className="size-3.5" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
-          {!isMcpChild && (
+          {canManageCurrentScope && !isMcpChild && (
             <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => navigate(`/enterprise/tools/${row.id}/edit`)}>
               <IconEdit />
               编辑
@@ -421,7 +426,7 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
             <FlaskConical />
             测试
           </DropdownMenuItem>
-          {!isMcpChild && (
+          {canManageCurrentScope && !isMcpChild && (
             <>
               <DropdownMenuSeparator className="my-[2px] bg-[#eef0f4]" />
               <DropdownMenuItem
@@ -564,12 +569,13 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
             variant="outline"
             size="sm"
             onClick={() => navigate(`/enterprise/tools/mcp/${row.id}/edit`)}
+            disabled={!canManageCurrentScope}
             className={RETURN_BUTTON_CLASS}
           >
             <IconRefresh className="size-[14px] shrink-0" />
             发现/同步
           </UIButton>
-          {isOverallAgent && (
+          {canManageCurrentScope && isOverallAgent && (
             <UIButton
               variant="outline"
               size="sm"
@@ -607,7 +613,9 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
     </article>
   );
 
-  const listEmptyText = isOverallAgent ? '暂无工具，点击「新增」创建一个吧' : '当前员工暂无工具';
+  const listEmptyText = isOverallAgent
+    ? canManageCurrentScope ? '暂无工具，点击「新增」创建一个吧' : '暂无工具'
+    : '当前员工暂无工具';
 
   return (
     <div className="min-h-full box-border px-[48px] pt-[32px] pb-[43px] max-[900px]:px-[16px]">
@@ -623,31 +631,35 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
           <IconRefresh className={cn('size-[14px]', loading && 'animate-spin')} />
           刷新
         </UIButton>
-        <DropdownMenu>
-          <DropdownMenuTrigger className="flex h-[34px] items-center gap-[4px] rounded-[10px] bg-[#18181a] px-[20px] text-[12px] font-normal text-white outline-none transition-colors hover:bg-[#303030]">
-            <IconAdd className="size-[14px]" />
-            新增
-            <IconChevronDown className="size-[12px]" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
-            <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('blank')}>
-              <IconAdd />
-              新建工具
-            </DropdownMenuItem>
-            {!isOverallAgent && (
-              <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('plaza')}>
-                <IconTool className="size-[14px]" />
-                从广场复制
-              </DropdownMenuItem>
-            )}
-            {!isOverallAgent && (
-              <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('employee')}>
-                <FlaskConical />
-                从数字员工复制
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {canOpenCreateMenu && (
+          <DropdownMenu>
+            <DropdownMenuTrigger className="flex h-[34px] items-center gap-[4px] rounded-[10px] bg-[#18181a] px-[20px] text-[12px] font-normal text-white outline-none transition-colors hover:bg-[#303030]">
+              <IconAdd className="size-[14px]" />
+              新增
+              <IconChevronDown className="size-[12px]" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
+              {canManageCurrentScope && (
+                <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('blank')}>
+                  <IconAdd />
+                  新建空白工具
+                </DropdownMenuItem>
+              )}
+              {!isOverallAgent && (
+                <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('plaza')}>
+                  <IconTool className="size-[14px]" />
+                  从广场复制
+                </DropdownMenuItem>
+              )}
+              {!isOverallAgent && (
+                <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('employee')}>
+                  <FlaskConical />
+                  从数字员工复制
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       <div className="flex flex-col gap-[24px] rounded-[20px_20px_0_0] bg-white p-[18px_18px_24px_18px] shadow-[0_-4px_16px_0_rgba(0,0,0,0.05)]">

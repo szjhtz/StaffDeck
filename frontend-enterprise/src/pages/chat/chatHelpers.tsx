@@ -29,10 +29,14 @@ import type {
   TraceTool,
   TurnTrace,
 } from './chatTypes';
+export {
+  SELECTED_AGENT_STORAGE_KEY,
+  SESSION_FILTER_STORAGE_PREFIX,
+  sessionFilterStorageKey,
+} from '@/lib/agent-scope-storage';
 
 export const MODEL_CONFIG_STORAGE_PREFIX = 'skill_agent_selected_model_config';
 export const SESSION_READ_STORAGE_PREFIX = 'skill_agent_session_read_at';
-export const SELECTED_AGENT_STORAGE_KEY = 'skill_agent_selected_agent';
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'skill_agent_sidebar_collapsed';
 export const RUNNING_EVENT_RECOVERY_WINDOW_MS = 600 * 1000;
 export const CHAT_STREAM_IDLE_TIMEOUT_MS = 600 * 1000;

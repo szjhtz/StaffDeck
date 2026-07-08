@@ -45,8 +45,8 @@ import IconRefresh from '../assets/icons/refresh.svg?react';
 import IconSearch from '../assets/icons/search.svg?react';
 import IconSkill from '../assets/icons/plaza-skill.svg?react';
 import IconTrash from '../assets/icons/trash.svg?react';
-import type { EnterpriseAuthUser } from '../auth';
-import { resourceCreatorNameOrAdmin, visibleEmployeeAgents } from '../employee';
+import { isEnterpriseAdmin, type EnterpriseAuthUser } from '../auth';
+import { canManageEmployeeAgent, resourceCreatorNameOrAdmin, visibleEmployeeAgents } from '../employee';
 import { useClientPagination } from '../hooks/useClientPagination';
 import { StatusBadge } from './scheduled-tasks/StatusBadge';
 import type { BadgeTone } from './scheduled-tasks/shared';
@@ -112,6 +112,10 @@ export default function SkillsPage({
   const [statusFilter, setStatusFilter] = useState<SkillStatusFilter>('all');
   const [branchFilter, setBranchFilter] = useState<BranchFilter>('all');
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
+  const currentAgent = useMemo(() => agents.find((item) => item.id === agentId), [agents, agentId]);
+  const canManageCurrentScope = currentAgent
+    ? canManageEmployeeAgent(currentAgent, currentUser)
+    : isEnterpriseAdmin(currentUser) && isOverallAgent;
   const [importOpen, setImportOpen] = useState(false);
   const [importMode, setImportMode] = useState<'plaza' | 'employee'>('plaza');
   const [importSourceAgentId, setImportSourceAgentId] = useState('');
@@ -274,6 +278,24 @@ export default function SkillsPage({
   ];
 
   function renderActions(row: SkillRead) {
+    if (isOverallAgent && !canManageCurrentScope) {
+      return (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label="SOP 操作"
+            className="ml-auto grid size-7 place-items-center rounded-[8px] text-[#1a71ff] transition-colors outline-none hover:bg-black/5 hover:text-[#4a8dff] focus-visible:bg-black/5"
+          >
+            <IconMore className="size-3.5" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
+            <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void openVersions(row)}>
+              <IconHistory />
+              版本管理
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      );
+    }
     return (
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -574,7 +596,9 @@ export default function SkillsPage({
     return agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
   }
 
-  const listEmptyText = isOverallAgent ? '暂无 SOP，点击「新增」创建一个吧' : '当前员工暂无本地 SOP';
+  const listEmptyText = isOverallAgent
+    ? canManageCurrentScope ? '暂无 SOP，点击「新增」创建一个吧' : '暂无 SOP'
+    : '当前员工暂无本地 SOP';
 
   return (
     <div className="min-h-full box-border px-[48px] pt-[32px] pb-[43px] max-[900px]:px-[16px]" aria-busy={loading}>
@@ -590,31 +614,33 @@ export default function SkillsPage({
           <IconRefresh className={cn('size-[14px]', loading && 'animate-spin')} />
           刷新
         </UIButton>
-        <DropdownMenu>
-          <DropdownMenuTrigger className="flex h-[34px] items-center gap-[4px] rounded-[10px] bg-[#18181a] px-[20px] text-[12px] font-normal text-white outline-none transition-colors hover:bg-[#303030]">
-            <IconAdd className="size-[14px]" />
-            新增
-            <IconChevronDown className="size-[12px]" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
-            <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => openCreate()}>
-              <IconAdd />
-              新建空白 SOP
-            </DropdownMenuItem>
-            {!isOverallAgent && (
-              <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void openImport('plaza')}>
-                <Copy />
-                从广场复制
+        {canManageCurrentScope && (
+          <DropdownMenu>
+            <DropdownMenuTrigger className="flex h-[34px] items-center gap-[4px] rounded-[10px] bg-[#18181a] px-[20px] text-[12px] font-normal text-white outline-none transition-colors hover:bg-[#303030]">
+              <IconAdd className="size-[14px]" />
+              新增
+              <IconChevronDown className="size-[12px]" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
+              <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => openCreate()}>
+                <IconAdd />
+                新建空白 SOP
               </DropdownMenuItem>
-            )}
-            {!isOverallAgent && (
-              <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void openImport('employee')}>
-                <Users />
-                从数字员工复制
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+              {!isOverallAgent && (
+                <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void openImport('plaza')}>
+                  <Copy />
+                  从广场复制
+                </DropdownMenuItem>
+              )}
+              {!isOverallAgent && (
+                <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void openImport('employee')}>
+                  <Users />
+                  从数字员工复制
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       <div className="flex flex-col gap-[24px] rounded-[20px_20px_0_0] bg-white p-[18px_18px_24px_18px] shadow-[0_-4px_16px_0_rgba(0,0,0,0.05)]">

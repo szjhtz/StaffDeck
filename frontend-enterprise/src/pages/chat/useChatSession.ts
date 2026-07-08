@@ -22,6 +22,7 @@ import {
   type StreamEvent,
 } from '@/api/client';
 import { clearEnterpriseAuthSession, getEnterpriseAuthSession } from '@/auth';
+import { emitAgentScopeChange, persistSharedAgentScope } from '@/lib/agent-scope-storage';
 import {
   agentResourceCount,
   employeeDisplayName,
@@ -95,6 +96,7 @@ import {
   routerDecisionTraceLine,
   sameRoleTurn,
   scheduledDraftForMessage,
+  sessionFilterStorageKey,
   shouldKeepRealtimeMessage,
   stepResultTraceLine,
   streamSkillLabel,
@@ -239,7 +241,9 @@ export function useChatSession() {
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState(() => window.localStorage.getItem(SELECTED_AGENT_STORAGE_KEY) || '');
   const [sessionAgentFilter, setSessionAgentFilter] = useState(() => (
-    window.localStorage.getItem(SELECTED_AGENT_STORAGE_KEY) || 'all'
+    window.localStorage.getItem(sessionFilterStorageKey(userId))
+    || window.localStorage.getItem(SELECTED_AGENT_STORAGE_KEY)
+    || 'all'
   ));
   const [modelConfigs, setModelConfigs] = useState<ModelConfigRead[]>([]);
   const [selectedModelConfigId, setSelectedModelConfigId] = useState(
@@ -301,7 +305,6 @@ export function useChatSession() {
   const queuedTurnsRef = useRef<PreparedChatTurn[]>([]);
   const queuedTurnProcessingRef = useRef(false);
   const sessionsInitializedRef = useRef(false);
-  const sessionFilterInitializedRef = useRef(false);
   const autoOpenedSessionIdsRef = useRef(new Set<string>());
   const loadErrorNoticeRef = useRef<Record<string, number>>({});
   const uploadControllersRef = useRef(new Map<string, AbortController>());
@@ -456,13 +459,6 @@ export function useChatSession() {
       })),
     ];
   }, [availableAgents, sessions]);
-  useEffect(() => {
-    if (sessionFilterInitializedRef.current) return;
-    const preferred = selectedAgentId || sessionFilterOptions.find((item) => item.value !== 'all')?.value || '';
-    if (!preferred) return;
-    sessionFilterInitializedRef.current = true;
-    setSessionAgentFilter((current) => (current === 'all' ? preferred : current));
-  }, [selectedAgentId, sessionFilterOptions]);
   const visibleSidebarSessions = useMemo(() => (
     sessionAgentFilter === 'all'
       ? sessions
@@ -494,7 +490,6 @@ export function useChatSession() {
           const employeeRows = visibleChatEmployees(rows, auth?.user);
           if (current && employeeRows.some((item) => item.id === current)) return current;
           const next = employeeRows[0]?.id || '';
-          if (next) window.localStorage.setItem(SELECTED_AGENT_STORAGE_KEY, next);
           return next;
         });
       })
@@ -504,8 +499,11 @@ export function useChatSession() {
   useEffect(() => {
     if (!activeDraftAgentId) return;
     setSelectedAgentId(activeDraftAgentId);
-    window.localStorage.setItem(SELECTED_AGENT_STORAGE_KEY, activeDraftAgentId);
-  }, [activeDraftAgentId]);
+    if (draftAgentId) {
+      persistSharedAgentScope(activeDraftAgentId, userId);
+      emitAgentScopeChange(activeDraftAgentId);
+    }
+  }, [activeDraftAgentId, draftAgentId, userId]);
 
   useEffect(() => {
     if (!auth) return;
@@ -806,9 +804,10 @@ export function useChatSession() {
 
   useEffect(() => {
     if (!sessionFilterOptions.some((item) => item.value === sessionAgentFilter)) {
-      setSessionAgentFilter(selectedAgentId || sessionFilterOptions.find((item) => item.value !== 'all')?.value || 'all');
+      setSessionAgentFilter('all');
+      window.localStorage.setItem(sessionFilterStorageKey(userId), 'all');
     }
-  }, [selectedAgentId, sessionAgentFilter, sessionFilterOptions]);
+  }, [sessionAgentFilter, sessionFilterOptions, userId]);
   const currentScheduledDraft = activeConversationId ? scheduledDrafts[activeConversationId] : undefined;
   const hasVisibleMessageScheduledDraft = displayedMessages.some((item) => (
     item.role === 'assistant'
@@ -2785,13 +2784,25 @@ export function useChatSession() {
   const openDraftForAgent = useCallback((agentId: string) => {
     if (!agentId) return;
     setSelectedAgentId(agentId);
-    window.localStorage.setItem(SELECTED_AGENT_STORAGE_KEY, agentId);
+    persistSharedAgentScope(agentId, userId);
+    emitAgentScopeChange(agentId);
     navigate(`${CHAT_BASE_PATH}/draft/${encodeURIComponent(agentId)}`);
-  }, [navigate]);
+  }, [navigate, userId]);
 
   const openGallery = useCallback(() => {
     navigate('/workspace/gallery');
   }, [navigate]);
+
+  const changeSessionAgentFilter = useCallback((value: string) => {
+    const next = value || 'all';
+    setSessionAgentFilter(next);
+    window.localStorage.setItem(sessionFilterStorageKey(userId), next);
+    if (next !== 'all') {
+      setSelectedAgentId(next);
+      persistSharedAgentScope(next, userId);
+      emitAgentScopeChange(next);
+    }
+  }, [userId]);
 
   return {
     auth,
@@ -2805,7 +2816,7 @@ export function useChatSession() {
     sessionId,
     sessionReadTimes,
     sessionAgentFilter,
-    setSessionAgentFilter,
+    setSessionAgentFilter: changeSessionAgentFilter,
     sessionFilterOptions,
     // active state
     activeConversationId,

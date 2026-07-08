@@ -6,9 +6,11 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from app.api.knowledge import search_knowledge, update_chunk, update_document
+from app.agents.branching import ensure_open_gallery_binding
+from app.api.knowledge import list_documents, search_knowledge, update_chunk, update_document
 from app.api.knowledge_bases import knowledge_base_read
 from app.db.models import (
+    AgentProfile,
     KnowledgeBase,
     KnowledgeBaseVersion,
     KnowledgeBucket,
@@ -399,6 +401,63 @@ def test_knowledge_base_read_keeps_archived_rows_visible_despite_active_versions
 
     assert overall_read.status == "archived"
     assert branch_read.status == "archived"
+
+
+def test_list_documents_without_agent_scope_returns_only_open_gallery_documents() -> None:
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.add(AgentProfile(id="agent_overall", tenant_id="tenant_demo", name="开放广场", is_overall=True))
+        db.add(KnowledgeBase(id="kb_open", tenant_id="tenant_demo", name="开放知识库"))
+        db.add(KnowledgeBase(id="kb_private", tenant_id="tenant_demo", name="私有知识库"))
+        db.add(
+            KnowledgeBaseVersion(
+                id="kbv_open",
+                tenant_id="tenant_demo",
+                knowledge_base_id="kb_open",
+                version="1.0.0",
+                name="开放知识库",
+            )
+        )
+        db.add(
+            KnowledgeBaseVersion(
+                id="kbv_private",
+                tenant_id="tenant_demo",
+                knowledge_base_id="kb_private",
+                version="1.0.0",
+                name="私有知识库",
+            )
+        )
+        db.add(
+            KnowledgeDocument(
+                id="kdoc_open",
+                tenant_id="tenant_demo",
+                knowledge_base_id="kb_open",
+                knowledge_base_version_id="kbv_open",
+                filename="open.md",
+                file_type="md",
+                title="开放资料",
+                status="ready",
+            )
+        )
+        db.add(
+            KnowledgeDocument(
+                id="kdoc_private",
+                tenant_id="tenant_demo",
+                knowledge_base_id="kb_private",
+                knowledge_base_version_id="kbv_private",
+                filename="private.md",
+                file_type="md",
+                title="私有资料",
+                status="ready",
+            )
+        )
+        db.flush()
+        ensure_open_gallery_binding(db, "tenant_demo", "knowledge_base", "kb_open", "active")
+        db.commit()
+
+        rows = list_documents("tenant_demo", None, None, True, db)
+
+        assert {row.id for row in rows} == {"kdoc_open"}
 
 
 def test_update_document_syncs_document_card_and_okf_source_concept() -> None:

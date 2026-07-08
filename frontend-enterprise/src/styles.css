@@ -3190,6 +3190,134 @@ pre {
   min-width: 0;
 }
 
+.knowledge-document-card-markdown {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--foreground);
+}
+
+.knowledge-document-card-markdown.is-preview {
+  max-height: 96px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.knowledge-document-md-panel {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 16px;
+  background: var(--surface);
+  padding: 14px;
+}
+
+.knowledge-document-md-panel-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.knowledge-document-md-panel-head strong {
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.knowledge-document-md-scroll {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-radius: 12px;
+  background: var(--surface-soft);
+  padding: 12px 14px;
+}
+
+.knowledge-document-md-scroll.is-summary {
+  max-height: min(28dvh, 260px);
+}
+
+.knowledge-document-md-scroll.is-source {
+  max-height: min(52dvh, 560px);
+}
+
+.knowledge-markdown-preview {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.knowledge-markdown-preview > :first-child {
+  margin-top: 0;
+}
+
+.knowledge-markdown-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.knowledge-markdown-preview p {
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-markdown-preview h1,
+.knowledge-markdown-preview h2,
+.knowledge-markdown-preview h3,
+.knowledge-markdown-preview h4 {
+  margin: 14px 0 8px;
+  color: var(--foreground);
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.knowledge-markdown-preview h1 {
+  font-size: 18px;
+}
+
+.knowledge-markdown-preview h2 {
+  font-size: 16px;
+}
+
+.knowledge-markdown-preview h3,
+.knowledge-markdown-preview h4 {
+  font-size: 15px;
+}
+
+.knowledge-markdown-preview ul,
+.knowledge-markdown-preview ol {
+  margin: 8px 0;
+  padding-left: 22px;
+}
+
+.knowledge-markdown-preview li {
+  margin: 3px 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-markdown-preview strong {
+  font-weight: 650;
+}
+
+.knowledge-markdown-preview code {
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--muted) 70%, transparent);
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.knowledge-markdown-preview a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .knowledge-pageindex-card .ui-typography {
   margin-bottom: 0;
 }

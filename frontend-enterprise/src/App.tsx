@@ -72,6 +72,11 @@ import { Button as UIButton } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { notify } from "@/components/ui/app-toast";
+import {
+  emitAgentScopeChange,
+  ENTERPRISE_AGENT_STORAGE_KEY,
+  persistSharedAgentScope,
+} from "@/lib/agent-scope-storage";
 import { cn } from "@/lib/utils";
 import {
   SELECT_TRIGGER_CLASS,
@@ -81,7 +86,6 @@ import {
 } from "@/lib/enterprise-ui";
 import type { AgentProfileRead } from "./types";
 
-const ENTERPRISE_AGENT_STORAGE_KEY = "ultrarag_enterprise_agent_scope";
 const ENTERPRISE_SIDEBAR_STORAGE_KEY = "ultrarag_enterprise_sidebar_expanded";
 type AgentCreateMode = "copy" | "blank";
 
@@ -195,6 +199,7 @@ function Shell({
         (event as CustomEvent<{ agentId?: string }>).detail?.agentId ||
         window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) ||
         "";
+      if (nextAgentId) persistSharedAgentScope(nextAgentId, auth.user.id);
       setSelectedAgentId(nextAgentId);
     };
     window.addEventListener(
@@ -206,7 +211,7 @@ function Shell({
         "ultrarag-enterprise-agent-scope-change",
         onScopeChange,
       );
-  }, []);
+  }, [auth.user.id]);
 
   useEffect(() => {
     const onCreateAgent = () => openCreateAgentModal();
@@ -238,13 +243,9 @@ function Shell({
               preferredEmployeeAgent(selectableRows)?.id ||
               "";
           if (next) {
-            window.localStorage.setItem(ENTERPRISE_AGENT_STORAGE_KEY, next);
+            persistSharedAgentScope(next, auth.user.id);
             if (next !== current) {
-              window.dispatchEvent(
-                new CustomEvent("ultrarag-enterprise-agent-scope-change", {
-                  detail: { agentId: next },
-                }),
-              );
+              emitAgentScopeChange(next);
             }
           }
           return next;
@@ -260,12 +261,8 @@ function Shell({
 
   function changeAgentScope(agentId: string) {
     setSelectedAgentId(agentId);
-    window.localStorage.setItem(ENTERPRISE_AGENT_STORAGE_KEY, agentId);
-    window.dispatchEvent(
-      new CustomEvent("ultrarag-enterprise-agent-scope-change", {
-        detail: { agentId },
-      }),
-    );
+    persistSharedAgentScope(agentId, auth.user.id);
+    emitAgentScopeChange(agentId);
   }
 
   function handleSidebarOpenChange(open: boolean) {
@@ -500,7 +497,12 @@ function Shell({
               />
               <Route
                 path="/enterprise/knowledge/new"
-                element={<KnowledgeAddPage />}
+                element={
+                  <KnowledgeAddPage
+                    currentUser={auth.user}
+                    onLogout={onLogout}
+                  />
+                }
               />
               <Route
                 path="/enterprise/feedback"

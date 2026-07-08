@@ -33,7 +33,7 @@ from app.agents.branching import (
     system_creator_metadata,
 )
 from app.db import get_session
-from app.db.models import AgentResourceBinding, GeneralSkill, ModelConfig, utc_now
+from app.db.models import AgentResourceBinding, GeneralSkill, ModelConfig, User, utc_now
 from app.general_skills import (
     GeneralSkillClawHubImportRequest,
     GeneralSkillImportRequest,
@@ -44,6 +44,8 @@ from app.general_skills import (
 )
 from app.general_skills.schema import GeneralSkillFile
 from app.general_skills.runner import GeneralSkillRunner
+from app.security.auth import get_current_user
+from app.security.permissions import ensure_agent_scope_manager, ensure_open_gallery_admin
 from app.security.tenant import ensure_tenant
 
 router = APIRouter(prefix="/api/enterprise/general-skills", tags=["enterprise:general-skills"])
@@ -88,6 +90,7 @@ def general_skill_read(row: GeneralSkill, status_override: str | None = None) ->
 def import_general_skill(
     request: GeneralSkillImportRequest,
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> GeneralSkillRead:
     ensure_tenant(db, request.tenant_id)
     files = _normalize_skill_files(request.files, request.markdown)
@@ -120,7 +123,9 @@ def import_general_skill(
             raise HTTPException(status_code=409, detail="General skill slug already exists")
     now = utc_now()
     agent_id = _agent_id_or_none(request.agent_id)
-    agent = get_agent(db, request.tenant_id, agent_id)
+    agent = ensure_agent_scope_manager(db, request.tenant_id, agent_id, current_user)
+    if not (agent and not agent.is_overall):
+        ensure_open_gallery_admin(request.tenant_id, current_user)
     if row:
         if slug != row.slug:
             conflict = db.exec(
@@ -188,6 +193,7 @@ def import_general_skill(
 def import_skillhub_skill(
     request: GeneralSkillClawHubImportRequest,
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> GeneralSkillRead:
     ensure_tenant(db, request.tenant_id)
     raw_files = _load_clawhub_source(request.source)
@@ -203,6 +209,7 @@ def import_skillhub_skill(
         slug=request.slug,
         description=request.description,
         homepage=request.homepage,
+        current_user=current_user,
     )
 
 
@@ -210,14 +217,16 @@ def import_skillhub_skill(
 def import_clawhub_skill(
     request: GeneralSkillClawHubImportRequest,
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> GeneralSkillRead:
-    return import_skillhub_skill(request, db)
+    return import_skillhub_skill(request, db, current_user)
 
 
 @router.post("/import-package", response_model=GeneralSkillRead)
 def import_general_skill_package(
     request: GeneralSkillPackageUploadRequest,
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> GeneralSkillRead:
     ensure_tenant(db, request.tenant_id)
     filename = _clean_source_filename(request.filename)
@@ -248,6 +257,7 @@ def import_general_skill_package(
         slug=request.slug,
         description=request.description,
         homepage=request.homepage,
+        current_user=current_user,
     )
 
 
@@ -263,6 +273,7 @@ def _create_imported_general_skill(
     slug: str | None = None,
     description: str | None = None,
     homepage: str | None = None,
+    current_user: object | None = None,
 ) -> GeneralSkillRead:
     markdown = _skill_markdown_from_files(files)
     metadata = _parse_skill_metadata(markdown)
@@ -274,6 +285,8 @@ def _create_imported_general_skill(
     resolved_homepage = _optional_text(homepage) or _metadata_text(metadata, "homepage", "url", "source") or _clawhub_homepage_from_source(import_source)
     _validate_slug(resolved_slug)
     now = utc_now()
+    resolved_agent_id = _agent_id_or_none(agent_id)
+    agent = ensure_agent_scope_manager(db, tenant_id, resolved_agent_id, current_user)
     row = GeneralSkill(
         tenant_id=tenant_id,
         slug=resolved_slug,
@@ -289,8 +302,8 @@ def _create_imported_general_skill(
         created_at=now,
         updated_at=now,
     )
-    resolved_agent_id = _agent_id_or_none(agent_id)
-    agent = get_agent(db, tenant_id, resolved_agent_id)
+    if not (agent and not agent.is_overall):
+        ensure_open_gallery_admin(tenant_id, current_user)
     if agent and not agent.is_overall:
         mark_resource_private_for_agent(row, agent.id)
     else:
@@ -385,10 +398,11 @@ def publish_general_skill(
     tenant_id: str = Query(...),
     db: Session = Depends(get_session),
     agent_id: str | None = Query(None),
+    current_user: User = Depends(get_current_user),
 ) -> GeneralSkillRead:
     row = _get_general_skill(db, tenant_id, slug)
     agent_id = _agent_id_or_none(agent_id)
-    agent = get_agent(db, tenant_id, agent_id)
+    agent = ensure_agent_scope_manager(db, tenant_id, agent_id, current_user)
     if agent and not agent.is_overall:
         binding = _ensure_general_skill_binding(db, tenant_id, agent.id, row.id)
         binding.status = "active"
@@ -396,6 +410,7 @@ def publish_general_skill(
         db.add(binding)
         db.commit()
         return general_skill_read(row, status_override="published")
+    ensure_open_gallery_admin(tenant_id, current_user)
     row.status = "published"
     mark_resource_open_gallery(row)
     row.updated_at = utc_now()
@@ -413,10 +428,11 @@ def archive_general_skill(
     tenant_id: str = Query(...),
     db: Session = Depends(get_session),
     agent_id: str | None = Query(None),
+    current_user: User = Depends(get_current_user),
 ) -> GeneralSkillRead:
     row = _get_general_skill(db, tenant_id, slug)
     agent_id = _agent_id_or_none(agent_id)
-    agent = get_agent(db, tenant_id, agent_id)
+    agent = ensure_agent_scope_manager(db, tenant_id, agent_id, current_user)
     if agent and not agent.is_overall:
         binding = _ensure_general_skill_binding(db, tenant_id, agent.id, row.id)
         binding.status = "inactive"
@@ -424,6 +440,7 @@ def archive_general_skill(
         db.add(binding)
         db.commit()
         return general_skill_read(row, status_override="archived")
+    ensure_open_gallery_admin(tenant_id, current_user)
     row.status = "archived"
     row.updated_at = utc_now()
     db.add(row)
@@ -438,10 +455,11 @@ def delete_general_skill(
     tenant_id: str = Query(...),
     db: Session = Depends(get_session),
     agent_id: str | None = Query(None),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
     agent_id = _agent_id_or_none(agent_id)
     row = _get_general_skill(db, tenant_id, slug)
-    agent = get_agent(db, tenant_id, agent_id)
+    agent = ensure_agent_scope_manager(db, tenant_id, agent_id, current_user)
     if agent and not agent.is_overall:
         binding = _ensure_general_skill_binding(db, tenant_id, agent.id, row.id)
         binding.status = "deleted"
@@ -452,11 +470,13 @@ def delete_general_skill(
     if agent and agent.is_overall:
         if not is_open_gallery_resource(db, tenant_id, "general_skill", row):
             raise HTTPException(status_code=404, detail="General skill not visible in open gallery")
+        ensure_open_gallery_admin(tenant_id, current_user)
         hide_open_gallery_binding(db, tenant_id, "general_skill", row.id)
         db.commit()
         return {"status": "hidden", "slug": slug}
 
     require_overall_agent(db, tenant_id, agent_id)
+    ensure_open_gallery_admin(tenant_id, current_user)
     db.delete(row)
     db.commit()
     return {"status": "deleted", "slug": slug}

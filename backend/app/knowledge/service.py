@@ -184,6 +184,7 @@ class KnowledgeService:
             metadata = job.metadata_json or {}
             content = base64.b64decode(str(metadata.get("content_base64") or ""))
             text, file_type = extract_text(job.filename, content)
+            self._raise_if_ingest_cancelled(job)
             self._update_ingest_stage(
                 job,
                 "normalizing",
@@ -192,6 +193,7 @@ class KnowledgeService:
             normalized_text = _normalize_text(text)
             if not normalized_text:
                 raise KnowledgeParseError("文档没有可用文本内容。")
+            self._raise_if_ingest_cancelled(job)
 
             self._update_ingest_stage(
                 job,
@@ -200,6 +202,7 @@ class KnowledgeService:
                 stats={"char_count": len(normalized_text), "file_type": file_type},
             )
             section_nodes = _build_section_nodes(normalized_text)
+            self._raise_if_ingest_cancelled(job)
             document_card = _build_document_card(
                 title=str(metadata.get("title") or Path(job.filename).stem),
                 filename=job.filename,
@@ -248,6 +251,7 @@ class KnowledgeService:
                 normalized_text,
                 section_nodes,
                 document_card,
+                job,
             )
             self._update_ingest_stage(
                 job,
@@ -261,8 +265,10 @@ class KnowledgeService:
                 detail="正在从 OKF Wiki 与原始资料回填引用来源",
                 stats={"bucket_count": len(buckets)},
             )
-            chunk_count = self._build_chunks(job.tenant_id, job.knowledge_base_id, document, buckets, section_nodes)
+            chunk_count = self._build_chunks(job.tenant_id, job.knowledge_base_id, document, buckets, section_nodes, job)
+            self._raise_if_ingest_cancelled(job)
             okf_concepts = build_okf_for_document(document, section_nodes, buckets)
+            self._raise_if_ingest_cancelled(job)
             concept_rows = upsert_concepts(
                 self.db,
                 job.tenant_id,
@@ -311,7 +317,7 @@ class KnowledgeService:
                 stats={"bucket_count": len(buckets), "chunk_count": chunk_count},
             )
 
-            self._discover_from_document(job.tenant_id, job.knowledge_base_id, document, buckets)
+            self._discover_from_document(job.tenant_id, job.knowledge_base_id, document, buckets, job)
             self._update_ingest_stage(
                 job,
                 "done",
@@ -524,10 +530,12 @@ class KnowledgeService:
         text: str,
         section_nodes: list[dict[str, Any]],
         document_card: dict[str, Any],
+        job: KnowledgeIngestJob,
     ) -> list[KnowledgeBucket]:
         model_config = self._default_model_config(tenant_id)
         structure_buckets = _structure_bucket_specs(section_nodes)
         llm_buckets = self._bucket_with_llm(section_nodes, model_config) if model_config else []
+        self._raise_if_ingest_cancelled(job)
         bucket_specs = _unique_bucket_specs(structure_buckets + _normalize_llm_bucket_specs(llm_buckets, section_nodes))
         if not bucket_specs:
             bucket_specs = _fallback_bucket_specs(_split_sections(text), section_nodes)
@@ -536,6 +544,7 @@ class KnowledgeService:
         self.db.exec(delete(KnowledgeDiscoverySuggestion).where(KnowledgeDiscoverySuggestion.document_id == document.id))
         rows: list[KnowledgeBucket] = []
         for index, spec in enumerate(bucket_specs):
+            self._raise_if_ingest_cancelled(job)
             content = str(spec.get("content") or "")
             section_ids = [str(item) for item in spec.get("section_ids", []) if item]
             if not content and section_ids:
@@ -584,11 +593,13 @@ class KnowledgeService:
         document: KnowledgeDocument,
         buckets: list[KnowledgeBucket],
         section_nodes: list[dict[str, Any]],
+        job: KnowledgeIngestJob,
     ) -> int:
         count = 0
         chunk_ids_by_bucket: dict[str, list[str]] = {}
         section_by_id = {str(node.get("section_id")): node for node in section_nodes}
         for bucket in buckets:
+            self._raise_if_ingest_cancelled(job)
             metadata = dict(bucket.metadata_json or {})
             section_ids = [str(item) for item in metadata.get("section_ids", []) if item]
             section_sources = [section_by_id[section_id] for section_id in section_ids if section_id in section_by_id]
@@ -603,9 +614,11 @@ class KnowledgeService:
                 ]
             local_index = 0
             for section in section_sources:
+                self._raise_if_ingest_cancelled(job)
                 content = str(section.get("content") or "")
                 parts = _chunk_text(content, EVIDENCE_CHUNK_CHARS)
                 for part in parts:
+                    self._raise_if_ingest_cancelled(job)
                     source_path = f"{document.filename} / {section.get('path') or bucket.title} / evidence {local_index + 1}"
                     row = KnowledgeChunk(
                         tenant_id=tenant_id,
@@ -648,10 +661,12 @@ class KnowledgeService:
         knowledge_base_id: str,
         document: KnowledgeDocument,
         buckets: list[KnowledgeBucket],
+        job: KnowledgeIngestJob,
     ) -> None:
         model_config = self._default_model_config(tenant_id)
         if not model_config:
             return
+        self._raise_if_ingest_cancelled(job)
         payload = {
             "document": {
                 "id": document.id,
@@ -673,10 +688,12 @@ class KnowledgeService:
             raw = LLMClient(model_config).generate_json(DISCOVERY_PROMPT.read_text(encoding="utf-8"), payload)
         except (LLMError, Exception):
             return
+        self._raise_if_ingest_cancelled(job)
         discoveries = raw.get("discoveries") if isinstance(raw, dict) else None
         if not isinstance(discoveries, list):
             return
         for item in discoveries:
+            self._raise_if_ingest_cancelled(job)
             if not isinstance(item, dict):
                 continue
             suggestion_type = str(item.get("suggestion_type") or "").strip()

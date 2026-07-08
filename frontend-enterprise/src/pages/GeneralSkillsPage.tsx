@@ -16,7 +16,7 @@ import { Ban, CircleCheck, Copy, Users } from 'lucide-react';
 import { ContextMenu } from 'radix-ui';
 
 import { api, streamPost, TENANT_ID } from '../api/client';
-import type { EnterpriseAuthUser } from '../auth';
+import { isEnterpriseAdmin, type EnterpriseAuthUser } from '../auth';
 import AppHeader from '@/components/AppHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable, type DataTableColumn } from '@/components/DataTable';
@@ -65,7 +65,7 @@ import IconProfileFile from '../assets/icons/profile-file.svg?react';
 import IconSearch from '../assets/icons/search.svg?react';
 import IconSkill from '../assets/icons/plaza-skill.svg?react';
 import IconTrash from '../assets/icons/trash.svg?react';
-import { resourceCreatorNameOrAdmin, visibleEmployeeAgents } from '../employee';
+import { canManageEmployeeAgent, resourceCreatorNameOrAdmin, visibleEmployeeAgents } from '../employee';
 import { useClientPagination } from '../hooks/useClientPagination';
 import { StatusBadge } from './scheduled-tasks/StatusBadge';
 import type { BadgeTone } from './scheduled-tasks/shared';
@@ -304,6 +304,7 @@ export default function GeneralSkillsPage({ embedded = false, currentUser, onLog
   const [statusFilter, setStatusFilter] = useState<'all' | GeneralSkillRead['status']>('all');
   const [agentId, setAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
   const [isOverallAgent, setIsOverallAgent] = useState(true);
+  const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [clawhubModalOpen, setClawhubModalOpen] = useState(false);
   const [clawhubSource, setClawhubSource] = useState('');
   const [clawhubLoading, setClawhubLoading] = useState(false);
@@ -321,6 +322,10 @@ export default function GeneralSkillsPage({ embedded = false, currentUser, onLog
 
   const pageTitle = isOverallAgent ? '技能广场' : '技能';
   const listLabel = isOverallAgent ? '技能广场列表' : '技能列表';
+  const currentAgent = useMemo(() => agents.find((item) => item.id === agentId), [agents, agentId]);
+  const canManageCurrentScope = currentAgent
+    ? canManageEmployeeAgent(currentAgent, currentUser)
+    : isEnterpriseAdmin(currentUser) && isOverallAgent;
 
   const load = () => {
     const agentSuffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
@@ -339,8 +344,9 @@ export default function GeneralSkillsPage({ embedded = false, currentUser, onLog
 
   useEffect(() => {
     api
-      .get<Array<{ id: string; is_overall: boolean }>>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`)
+      .get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`)
       .then((items) => {
+        setAgents(items);
         setIsOverallAgent(Boolean(items.find((item) => item.id === agentId)?.is_overall ?? true));
         setAgentScopeLoaded(true);
       })
@@ -556,6 +562,9 @@ export default function GeneralSkillsPage({ embedded = false, currentUser, onLog
 
   function renderActions(row: GeneralSkillRead) {
     const published = row.status === 'published';
+    if (isOverallAgent && !canManageCurrentScope) {
+      return null;
+    }
     return (
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -683,7 +692,9 @@ export default function GeneralSkillsPage({ embedded = false, currentUser, onLog
     );
   };
 
-  const listEmptyText = isOverallAgent ? '暂无技能，点击「新增」创建一个吧' : '当前员工暂无技能';
+  const listEmptyText = isOverallAgent
+    ? canManageCurrentScope ? '暂无技能，点击「新增」创建一个吧' : '暂无技能'
+    : '当前员工暂无技能';
 
   return (
     <div className={embedded ? undefined : 'min-h-full box-border px-[48px] pt-[32px] pb-[43px] max-[900px]:px-[16px]'}>
@@ -700,35 +711,37 @@ export default function GeneralSkillsPage({ embedded = false, currentUser, onLog
               <IconRefresh className={cn('size-[14px]', loading && 'animate-spin')} />
               刷新
             </UIButton>
-            <DropdownMenu>
-              <DropdownMenuTrigger className="flex h-[34px] items-center gap-[4px] rounded-[10px] bg-[#18181a] px-[20px] text-[12px] font-normal text-white outline-none transition-colors hover:bg-[#303030]">
-                <IconAdd className="size-[14px]" />
-                新增
-                <IconChevronDown className="size-[12px]" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
-                <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => navigate('/enterprise/general-skills/new')}>
-                  <IconAdd />
-                  新建技能
-                </DropdownMenuItem>
-                {!isOverallAgent && (
-                  <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void requestAgentImport('plaza')}>
-                    <Copy />
-                    从广场复制
+            {canManageCurrentScope && (
+              <DropdownMenu>
+                <DropdownMenuTrigger className="flex h-[34px] items-center gap-[4px] rounded-[10px] bg-[#18181a] px-[20px] text-[12px] font-normal text-white outline-none transition-colors hover:bg-[#303030]">
+                  <IconAdd className="size-[14px]" />
+                  新增
+                  <IconChevronDown className="size-[12px]" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
+                  <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => navigate('/enterprise/general-skills/new')}>
+                    <IconAdd />
+                    新建技能
                   </DropdownMenuItem>
-                )}
-                <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => requestClawHubImport()}>
-                  <GithubOutlined />
-                  从开源平台导入
-                </DropdownMenuItem>
-                {!isOverallAgent && (
-                  <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void requestAgentImport('employee')}>
-                    <Users />
-                    从数字员工复制
+                  {!isOverallAgent && (
+                    <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void requestAgentImport('plaza')}>
+                      <Copy />
+                      从广场复制
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => requestClawHubImport()}>
+                    <GithubOutlined />
+                    从开源平台导入
                   </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  {!isOverallAgent && (
+                    <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void requestAgentImport('employee')}>
+                      <Users />
+                      从数字员工复制
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
         </>
       )}
@@ -1164,6 +1177,7 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
   const [agentImportSelectedSkillIds, setAgentImportSelectedSkillIds] = useState<string[]>([]);
   const [agentId, setAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
   const [isOverallAgent, setIsOverallAgent] = useState(true);
+  const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [deleteSkillTarget, setDeleteSkillTarget] = useState<GeneralSkillRead | null>(null);
   const [deleteFileTarget, setDeleteFileTarget] = useState<GeneralSkillFile | null>(null);
   const [renameTarget, setRenameTarget] = useState<GeneralSkillFile | null>(null);
@@ -1185,6 +1199,10 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
   );
   const selectedFileLanguage = useMemo(() => languageFromFilePath(selectedFile?.path), [selectedFile?.path]);
   const isNew = mode === 'new';
+  const currentAgent = useMemo(() => agents.find((item) => item.id === agentId), [agents, agentId]);
+  const canManageCurrentScope = currentAgent
+    ? canManageEmployeeAgent(currentAgent, currentUser)
+    : isEnterpriseAdmin(currentUser) && isOverallAgent;
   const pageTitle = isNew ? '新建空白技能' : '编辑技能';
   const pageDescription = isOverallAgent
     ? (isNew
@@ -1221,8 +1239,9 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
 
   useEffect(() => {
     api
-      .get<Array<{ id: string; is_overall: boolean }>>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`)
+      .get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`)
       .then((items) => {
+        setAgents(items);
         setIsOverallAgent(Boolean(items.find((item) => item.id === agentId)?.is_overall ?? true));
       })
       .catch(() => setIsOverallAgent(true));
@@ -1289,6 +1308,10 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
   }
 
   async function importSkill(): Promise<GeneralSkillRead | null> {
+    if (!canManageCurrentScope) {
+      notify.error('只有管理员可以编辑技能广场内容');
+      return null;
+    }
     if (!markdown.trim()) {
       notify.warning('请先粘贴或上传 SKILL.md');
       return null;
@@ -1374,6 +1397,10 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
   }
 
   async function setSkillPublished(row: GeneralSkillRead, published: boolean) {
+    if (!canManageCurrentScope) {
+      notify.error('只有管理员可以编辑技能广场内容');
+      return;
+    }
     try {
       const agentSuffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
       const next = await api.post<GeneralSkillRead>(
@@ -1389,6 +1416,10 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
   async function runDeleteSkill() {
     const row = deleteSkillTarget;
     if (!row) return;
+    if (!canManageCurrentScope) {
+      notify.error('只有管理员可以编辑技能广场内容');
+      return;
+    }
     const branchMode = !isOverallAgent;
     try {
       const agentSuffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
@@ -1914,7 +1945,7 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
 
   const isLiveRunning = loading && !runResult;
 
-  const importMenu = (
+  const importMenu = canManageCurrentScope ? (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <UIButton variant="outline" className={RETURN_BUTTON_CLASS}>
@@ -1943,7 +1974,7 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
         )}
       </DropdownMenuContent>
     </DropdownMenu>
-  );
+  ) : null;
 
   return (
     <div
@@ -1962,16 +1993,18 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
           <IconArrowRight className="size-3.5 rotate-180" />
           返回技能
         </UIButton>
-        {!isNew && (
+        {!isNew && canManageCurrentScope && (
           <UIButton variant="outline" className={RETURN_BUTTON_CLASS} onClick={() => navigate('/enterprise/general-skills/new')}>
             <PlusOutlined />
             新建技能
           </UIButton>
         )}
         {importMenu}
-        <UIButton disabled={saving} className={PRIMARY_BUTTON_CLASS} onClick={() => void importSkill()}>
-          保存
-        </UIButton>
+        {canManageCurrentScope && (
+          <UIButton disabled={saving} className={PRIMARY_BUTTON_CLASS} onClick={() => void importSkill()}>
+            保存
+          </UIButton>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-[20px] xl:grid-cols-2 xl:grid-rows-[auto_minmax(0,1fr)] xl:items-stretch">
@@ -1981,6 +2014,7 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
                 <Input
                   value={skillName}
                   onChange={(event) => setSkillName(event.target.value)}
+                  disabled={!canManageCurrentScope}
                   placeholder="例如 天气查询、代码审查"
                 />
               </Field>
@@ -1988,6 +2022,7 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
                 <Input
                   value={skillSlug}
                   onChange={(event) => setSkillSlug(event.target.value)}
+                  disabled={!canManageCurrentScope}
                   placeholder="用于路由和接口路径，例如 weather-zh"
                 />
               </Field>
@@ -1995,6 +2030,7 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
                 <Input
                   value={skillDescription}
                   onChange={(event) => setSkillDescription(event.target.value)}
+                  disabled={!canManageCurrentScope}
                   placeholder="用于员工选择技能时的说明"
                 />
               </Field>
@@ -2002,6 +2038,7 @@ function GeneralSkillEditorPage({ mode, currentUser, onLogout }: { mode: 'new' |
                 <Input
                   value={skillHomepage}
                   onChange={(event) => setSkillHomepage(event.target.value)}
+                  disabled={!canManageCurrentScope}
                   placeholder="可选，参考文档或项目主页"
                 />
               </Field>

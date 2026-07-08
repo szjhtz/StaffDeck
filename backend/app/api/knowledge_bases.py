@@ -34,6 +34,7 @@ from app.db.models import (
     KnowledgeDiscoverySuggestion,
     KnowledgeDocument,
     KnowledgeIngestJob,
+    User,
     utc_now,
 )
 from app.knowledge.schema import (
@@ -53,6 +54,8 @@ from app.knowledge.okf import (
     persist_lint_issues,
     upsert_concepts,
 )
+from app.security.auth import get_current_user
+from app.security.permissions import ensure_agent_scope_manager, ensure_open_gallery_admin
 from app.security.tenant import ensure_tenant
 
 router = APIRouter(prefix="/api/enterprise/knowledge-bases", tags=["enterprise:knowledge-bases"])
@@ -130,6 +133,7 @@ def create_knowledge_base(
     request: KnowledgeBaseCreateRequest,
     agent_id: str | None = Query(None),
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> KnowledgeBaseRead:
     ensure_tenant(db, request.tenant_id)
     name = request.name.strip()
@@ -140,6 +144,9 @@ def create_knowledge_base(
     ).first()
     if existing:
         raise HTTPException(status_code=409, detail="Knowledge base name already exists")
+    agent = ensure_agent_scope_manager(db, request.tenant_id, agent_id, current_user)
+    if not (agent and not agent.is_overall):
+        ensure_open_gallery_admin(request.tenant_id, current_user)
     row = KnowledgeBase(
         tenant_id=request.tenant_id,
         name=name,
@@ -149,7 +156,6 @@ def create_knowledge_base(
     )
     db.add(row)
     db.flush()
-    agent = get_agent(db, request.tenant_id, agent_id)
     if agent and not agent.is_overall:
         mark_resource_private_for_agent(row, agent.id)
         ensure_agent_private_knowledge_branch(db, request.tenant_id, agent.id, row)
@@ -190,9 +196,10 @@ def update_knowledge_base(
     request: KnowledgeBaseUpdateRequest,
     agent_id: str | None = Query(None),
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> KnowledgeBaseRead:
     row = _get_knowledge_base(db, request.tenant_id, knowledge_base_id)
-    agent = get_agent(db, request.tenant_id, agent_id)
+    agent = ensure_agent_scope_manager(db, request.tenant_id, agent_id, current_user)
     if agent and not agent.is_overall:
         branch = db.exec(
             select(AgentKnowledgeBranch).where(
@@ -247,6 +254,7 @@ def update_knowledge_base(
                 "status": branch.status,
             },
         )
+    ensure_open_gallery_admin(request.tenant_id, current_user)
     if request.name is not None:
         name = request.name.strip()
         if not name:
@@ -360,8 +368,9 @@ def upsert_okf_concept(
     request: KnowledgeConceptUpdateRequest,
     agent_id: str | None = Query(None),
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> KnowledgeConceptRead:
-    version = _writable_knowledge_version(db, request.tenant_id, knowledge_base_id, agent_id)
+    version = _writable_knowledge_version(db, request.tenant_id, knowledge_base_id, agent_id, current_user)
     document_id = _document_id_for_version(db, request.tenant_id, knowledge_base_id, version.id, request.document_id)
     parsed = parse_okf_markdown(concept_id, request.content_md)
     rows = upsert_concepts(
@@ -435,8 +444,9 @@ def delete_knowledge_base(
     tenant_id: str = Query(...),
     agent_id: str | None = Query(None),
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
-    agent = get_agent(db, tenant_id, agent_id)
+    agent = ensure_agent_scope_manager(db, tenant_id, agent_id, current_user)
     if agent and not agent.is_overall:
         row = _get_knowledge_base(db, tenant_id, knowledge_base_id)
         branch = db.exec(
@@ -477,9 +487,11 @@ def delete_knowledge_base(
     if agent and agent.is_overall:
         if not is_open_gallery_resource(db, tenant_id, "knowledge_base", row):
             raise HTTPException(status_code=404, detail="Knowledge base not visible in open gallery")
+        ensure_open_gallery_admin(tenant_id, current_user)
         hide_open_gallery_binding(db, tenant_id, "knowledge_base", row.id)
         db.commit()
         return {"status": "hidden"}
+    ensure_open_gallery_admin(tenant_id, current_user)
     for model in (
         KnowledgeDiscoverySuggestion,
         KnowledgeIngestJob,
@@ -518,8 +530,9 @@ def sync_knowledge_base_from_overall(
     tenant_id: str = Query(...),
     agent_id: str = Query(...),
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, object]:
-    agent = get_agent(db, tenant_id, agent_id)
+    agent = ensure_agent_scope_manager(db, tenant_id, agent_id, current_user)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     if agent.is_overall:
@@ -535,12 +548,14 @@ def promote_knowledge_base_to_overall(
     tenant_id: str = Query(...),
     agent_id: str = Query(...),
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, object]:
     agent = get_agent(db, tenant_id, agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     if agent.is_overall:
         raise HTTPException(status_code=400, detail="Overall agent does not have a branch to promote")
+    ensure_open_gallery_admin(tenant_id, current_user)
     version = promote_knowledge_branch_to_overall(db, tenant_id, agent_id, knowledge_base_id)
     db.commit()
     return {"status": "promoted", "knowledge_base_id": knowledge_base_id, "version": version.version}
@@ -551,8 +566,9 @@ def rollback_knowledge_base(
     knowledge_base_id: str,
     request: KnowledgeBaseRollbackRequest,
     db: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, object]:
-    agent = get_agent(db, request.tenant_id, request.agent_id)
+    agent = ensure_agent_scope_manager(db, request.tenant_id, request.agent_id, current_user)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     if agent.is_overall:
@@ -637,13 +653,15 @@ def _writable_knowledge_version(
     tenant_id: str,
     knowledge_base_id: str,
     agent_id: str | None,
+    current_user: object | None = None,
 ) -> KnowledgeBaseVersion:
     _get_knowledge_base(db, tenant_id, knowledge_base_id)
-    agent = get_agent(db, tenant_id, agent_id)
+    agent = ensure_agent_scope_manager(db, tenant_id, agent_id, current_user)
     if agent and not agent.is_overall:
         version = knowledge_version_for_upload(db, tenant_id, knowledge_base_id, agent.id)
         db.commit()
         return version
+    ensure_open_gallery_admin(tenant_id, current_user)
     return _visible_knowledge_version(db, tenant_id, knowledge_base_id, agent_id)
 
 

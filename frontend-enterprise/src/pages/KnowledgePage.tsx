@@ -21,7 +21,7 @@ import type { HTMLAttributes, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, TENANT_ID } from '../api/client';
-import type { EnterpriseAuthUser } from '../auth';
+import { isEnterpriseAdmin, type EnterpriseAuthUser } from '../auth';
 import AppHeader from '@/components/AppHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DataTable, type DataTableColumn } from '@/components/DataTable';
@@ -55,13 +55,20 @@ import { Button as UIButton } from '@/components/ui/button';
 import { notify } from '@/components/ui/app-toast';
 import { cn } from '@/lib/utils';
 import { DIALOG_CANCEL_BUTTON_CLASS, DIALOG_FOOTER_CLASS, DIALOG_PRIMARY_BUTTON_CLASS, MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_ITEM_DANGER_CLASS, MOBILE_CARD_CLASS, OUTLINE_ACTION_BUTTON_CLASS, OUTLINE_ACTION_BUTTON_SM_CLASS, SEARCH_COMBO_BUTTON_CLASS, SEARCH_COMBO_CLASS, SEARCH_COMBO_INPUT_CLASS, SELECT_TRIGGER_CLASS } from '@/lib/enterprise-ui';
+import {
+  clearSharedAgentScope,
+  emitAgentScopeChange,
+  ENTERPRISE_AGENT_STORAGE_KEY,
+  persistSharedAgentScope,
+} from '@/lib/agent-scope-storage';
 import IconAdd from '../assets/icons/add.svg?react';
 import IconChevronDown from '../assets/icons/chevron-down.svg?react';
 import IconClear from '../assets/icons/field-clear.svg?react';
 import IconRefresh from '../assets/icons/refresh.svg?react';
 import IconSearch from '../assets/icons/search.svg?react';
-import { resourceCreatorNameOrAdmin, visibleEmployeeAgents } from '../employee';
+import { canManageEmployeeAgent, resourceCreatorNameOrAdmin, visibleEmployeeAgents } from '../employee';
 import { useClientPagination } from '../hooks/useClientPagination';
+import { renderMarkdownBlocks } from './chat/chatHelpers';
 import type {
   KnowledgeBaseRead,
   KnowledgeBucketRead,
@@ -75,9 +82,9 @@ import type {
   ModelConfigRead,
 } from '../types';
 
-const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
 const KNOWLEDGE_PAGE_SIZE = 10;
 const KNOWLEDGE_SEARCH_MODEL_STORAGE_KEY = 'knowledge-search-model';
+const TERMINAL_KNOWLEDGE_JOB_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 
 type KnowledgeBaseVersionRead = {
   id: string;
@@ -125,6 +132,24 @@ type KnowledgePageProps = {
   onLogout?: () => void;
 };
 
+function resolveKnowledgeAgentScope(
+  rows: AgentProfileRead[],
+  currentUser: EnterpriseAuthUser | undefined,
+  currentAgentId: string,
+): string {
+  const currentAgent = rows.find((item) => item.id === currentAgentId);
+  if (currentAgent) {
+    if (!currentAgent.is_overall || isEnterpriseAdmin(currentUser)) return currentAgent.id;
+  }
+  if (isEnterpriseAdmin(currentUser)) return '';
+  return visibleEmployeeAgents(rows, currentUser, { activeOnly: true })[0]?.id || '';
+}
+
+function effectiveKnowledgeAgentId(rows: AgentProfileRead[], agentId: string): string {
+  const agent = rows.find((item) => item.id === agentId);
+  return agent && !agent.is_overall ? agent.id : '';
+}
+
 export default function KnowledgeManagePage({ currentUser, onLogout }: KnowledgePageProps = {}) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -134,6 +159,7 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
   const [buckets, setBuckets] = useState<KnowledgeBucketRead[]>([]);
   const [loading, setLoading] = useState(false);
   const [agentId, setAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
+  const [agentScopeLoaded, setAgentScopeLoaded] = useState(false);
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [importMode, setImportMode] = useState<'plaza' | 'employee'>('plaza');
@@ -184,6 +210,9 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
 
   const currentAgent = useMemo(() => agents.find((item) => item.id === agentId), [agents, agentId]);
   const isOverallAgent = !currentAgent || currentAgent.is_overall;
+  const canManageCurrentScope = currentAgent
+    ? canManageEmployeeAgent(currentAgent, currentUser)
+    : isEnterpriseAdmin(currentUser);
   const effectiveAgentId = currentAgent && !currentAgent.is_overall ? agentId : '';
   const visibleKnowledgeBases = useMemo(
     () => knowledgeBases.filter((item) => !isEmptyDefaultKnowledgeBase(item)),
@@ -234,8 +263,23 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
   const pagination = useClientPagination(filteredKnowledgeBases, KNOWLEDGE_PAGE_SIZE, documentSearch);
 
   useEffect(() => {
-    void refresh();
-  }, [agentId, effectiveAgentId]);
+    void loadAgentScope();
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (!agentScopeLoaded) return;
+    const resolvedAgentId = resolveKnowledgeAgentScope(agents, currentUser, agentId);
+    if (resolvedAgentId !== agentId) {
+      clearKnowledgeViewState();
+      applyResolvedAgentScope(resolvedAgentId);
+      return;
+    }
+    if (!isEnterpriseAdmin(currentUser) && !resolvedAgentId) {
+      clearKnowledgeViewState();
+      return;
+    }
+    void refresh(effectiveKnowledgeAgentId(agents, resolvedAgentId));
+  }, [agentScopeLoaded, agentId, agents, currentUser?.id]);
 
   useEffect(() => {
     api
@@ -284,18 +328,59 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
     return () => window.removeEventListener('ultrarag-enterprise-agent-scope-change', onScopeChange);
   }, []);
 
-  async function refresh() {
-    setLoading(true);
-    const suffix = effectiveAgentId ? `&agent_id=${encodeURIComponent(effectiveAgentId)}` : '';
+  function applyResolvedAgentScope(nextAgentId: string) {
+    if (nextAgentId === agentId) return;
+    if (nextAgentId) {
+      persistSharedAgentScope(nextAgentId, currentUser?.id);
+    } else {
+      clearSharedAgentScope(currentUser?.id);
+    }
+    setAgentId(nextAgentId);
+    emitAgentScopeChange(nextAgentId);
+  }
+
+  function clearKnowledgeViewState() {
+    setDocuments([]);
+    setKnowledgeBases([]);
+    setSelectedDocument(null);
+    setBuckets([]);
+    setOkfConcepts([]);
+    setOkfLintIssues([]);
+    setSearchResult(null);
+  }
+
+  async function loadAgentScope() {
+    setAgentScopeLoaded(false);
     try {
-      const [docRows, kbRows, agentRows] = await Promise.all([
+      const agentRows = await api.get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`);
+      setAgents(agentRows);
+      const resolvedAgentId = resolveKnowledgeAgentScope(agentRows, currentUser, agentId);
+      if (resolvedAgentId !== agentId) {
+        clearKnowledgeViewState();
+        applyResolvedAgentScope(resolvedAgentId);
+      }
+      setAgentScopeLoaded(true);
+    } catch (error) {
+      clearKnowledgeViewState();
+      notify.error(error instanceof Error ? error.message : '加载员工失败');
+    }
+  }
+
+  async function refresh(scopedAgentId = effectiveAgentId) {
+    if (!agentScopeLoaded) return;
+    if (!isEnterpriseAdmin(currentUser) && !scopedAgentId) {
+      clearKnowledgeViewState();
+      return;
+    }
+    setLoading(true);
+    try {
+      const suffix = scopedAgentId ? `&agent_id=${encodeURIComponent(scopedAgentId)}` : '';
+      const [docRows, kbRows] = await Promise.all([
         api.get<KnowledgeDocumentRead[]>(`/api/enterprise/knowledge/documents?tenant_id=${TENANT_ID}&include_all_versions=true${suffix}`),
         api.get<KnowledgeBaseRead[]>(`/api/enterprise/knowledge-bases?tenant_id=${TENANT_ID}${suffix}`),
-        api.get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`),
       ]);
       setDocuments(docRows);
       setKnowledgeBases(kbRows);
-      setAgents(agentRows);
       const scopedDocRows =
         knowledgeBaseFilter === '__all__'
           ? docRows
@@ -806,11 +891,13 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
         >
           <MoreOutlined />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
-          <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => openEditKnowledgeBase(item)}>
-            <EditOutlined />
-            详情
-          </DropdownMenuItem>
+          <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
+          {canManageCurrentScope && (
+            <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => openEditKnowledgeBase(item)}>
+              <EditOutlined />
+              详情
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void openKnowledgeBaseVersions(item)}>
             <HistoryOutlined />
             版本管理
@@ -833,22 +920,26 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
               发布到广场
             </DropdownMenuItem>
           )}
-          {item.status === 'archived' ? (
-            <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void setKnowledgeBaseStatus(item, true)}>
-              <PlayCircleOutlined />
-              上线
-            </DropdownMenuItem>
-          ) : (
-            <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void setKnowledgeBaseStatus(item, false)}>
-              <PauseCircleOutlined />
-              下线
-            </DropdownMenuItem>
+          {canManageCurrentScope && (
+            <>
+              {item.status === 'archived' ? (
+                <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void setKnowledgeBaseStatus(item, true)}>
+                  <PlayCircleOutlined />
+                  上线
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => void setKnowledgeBaseStatus(item, false)}>
+                  <PauseCircleOutlined />
+                  下线
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator className="my-[2px] bg-[#eef0f4]" />
+              <DropdownMenuItem variant="destructive" className={MENU_ITEM_DANGER_CLASS} onSelect={() => deleteKnowledgeBase(item)}>
+                <DeleteOutlined />
+                {isOverallAgent ? '删除' : '移除'}
+              </DropdownMenuItem>
+            </>
           )}
-          <DropdownMenuSeparator className="my-[2px] bg-[#eef0f4]" />
-          <DropdownMenuItem variant="destructive" className={MENU_ITEM_DANGER_CLASS} onSelect={() => deleteKnowledgeBase(item)}>
-            <DeleteOutlined />
-            {isOverallAgent ? '删除' : '移除'}
-          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     );
@@ -957,35 +1048,37 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
           <IconRefresh className={cn('size-[14px]', loading && 'animate-spin')} />
           刷新
         </UIButton>
-        <DropdownMenu>
-          <DropdownMenuTrigger className="flex h-[34px] items-center gap-[4px] rounded-[10px] bg-[#18181a] px-[20px] text-[12px] font-normal text-white outline-none transition-colors hover:bg-[#303030]">
-            <IconAdd className="size-[14px]" />
-            新增
-            <IconChevronDown className="size-[12px]" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
-            <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('blank')}>
-              <FileAddOutlined />
-              新建知识库
-            </DropdownMenuItem>
-            <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('okf')}>
-              <FileMarkdownOutlined />
-              导入知识库备份包
-            </DropdownMenuItem>
-            {!isOverallAgent && (
-              <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('plaza')}>
-                <DownloadOutlined />
-                从广场复制
+        {canManageCurrentScope && (
+          <DropdownMenu>
+            <DropdownMenuTrigger className="flex h-[34px] items-center gap-[4px] rounded-[10px] bg-[#18181a] px-[20px] text-[12px] font-normal text-white outline-none transition-colors hover:bg-[#303030]">
+              <IconAdd className="size-[14px]" />
+              新增
+              <IconChevronDown className="size-[12px]" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
+              <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('blank')}>
+                <FileAddOutlined />
+                新建知识库
               </DropdownMenuItem>
-            )}
-            {!isOverallAgent && (
-              <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('employee')}>
-                <TeamOutlined />
-                从数字员工复制
+              <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('okf')}>
+                <FileMarkdownOutlined />
+                导入知识库备份包
               </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+              {!isOverallAgent && (
+                <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('plaza')}>
+                  <DownloadOutlined />
+                  从广场复制
+                </DropdownMenuItem>
+              )}
+              {!isOverallAgent && (
+                <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('employee')}>
+                  <TeamOutlined />
+                  从数字员工复制
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       <div className="flex flex-col gap-[24px] rounded-[20px_20px_0_0] bg-white p-[18px_18px_24px_18px] shadow-[0_-4px_16px_0_rgba(0,0,0,0.05)]">
@@ -1488,11 +1581,12 @@ export default function KnowledgeManagePage({ currentUser, onLogout }: Knowledge
   );
 }
 
-export function KnowledgeAddPage() {
+export function KnowledgeAddPage({ currentUser }: KnowledgePageProps = {}) {
   const navigate = useNavigate();
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseRead[]>([]);
   const [jobs, setJobs] = useState<Record<string, KnowledgeIngestJobRead>>({});
   const [agentId, setAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
+  const [agentScopeLoaded, setAgentScopeLoaded] = useState(false);
   const [checkedDiscoveryJobIds, setCheckedDiscoveryJobIds] = useState<string[]>([]);
   const [pendingDiscoveries, setPendingDiscoveries] = useState<KnowledgeDiscoveryRead[]>([]);
   const [discoveryModalOpen, setDiscoveryModalOpen] = useState(false);
@@ -1514,9 +1608,36 @@ export function KnowledgeAddPage() {
   );
 
   useEffect(() => {
+    let active = true;
+    api
+      .get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`)
+      .then((agentRows) => {
+        if (!active) return;
+        const resolvedAgentId = resolveKnowledgeAgentScope(agentRows, currentUser, agentId);
+        if (resolvedAgentId !== agentId) {
+          if (resolvedAgentId) {
+            persistSharedAgentScope(resolvedAgentId, currentUser?.id);
+          } else {
+            clearSharedAgentScope(currentUser?.id);
+          }
+          setAgentId(resolvedAgentId);
+          emitAgentScopeChange(resolvedAgentId);
+        }
+        setAgentScopeLoaded(true);
+      })
+      .catch(() => {
+        if (active) setAgentScopeLoaded(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (!agentScopeLoaded) return;
     void refreshKnowledgeBases();
     void loadRecentJobs();
-  }, [agentId]);
+  }, [agentId, agentScopeLoaded]);
 
   useEffect(() => {
     const onScopeChange = (event: Event) => {
@@ -1532,7 +1653,14 @@ export function KnowledgeAddPage() {
       activeJobs.forEach((job) => {
         void api
           .get<KnowledgeIngestJobRead>(`/api/enterprise/knowledge/jobs/${job.id}?tenant_id=${TENANT_ID}`)
-          .then((next) => setJobs((prev) => ({ ...prev, [next.id]: next })))
+          .then((next) => {
+            setJobs((prev) => ({ ...prev, [next.id]: next }));
+            if (TERMINAL_KNOWLEDGE_JOB_STATUSES.has(next.status)) {
+              setCancellingJobIds((current) => current.filter((id) => id !== next.id));
+              void refreshKnowledgeBases();
+              void loadRecentJobs();
+            }
+          })
           .catch(() => undefined);
       });
     }, 1400);
@@ -1548,6 +1676,10 @@ export function KnowledgeAddPage() {
   }, [sortedJobs, checkedDiscoveryJobIds, agentId]);
 
   async function refreshKnowledgeBases() {
+    if (!isEnterpriseAdmin(currentUser) && !agentId) {
+      setKnowledgeBases([]);
+      return;
+    }
     try {
       const suffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
       const rows = await api.get<KnowledgeBaseRead[]>(`/api/enterprise/knowledge-bases?tenant_id=${TENANT_ID}${suffix}`);
@@ -1558,6 +1690,10 @@ export function KnowledgeAddPage() {
   }
 
   async function loadRecentJobs() {
+    if (!isEnterpriseAdmin(currentUser) && !agentId) {
+      setJobs({});
+      return;
+    }
     try {
       const suffix = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
       const rows = await api.get<KnowledgeIngestJobRead[]>(
@@ -1570,6 +1706,10 @@ export function KnowledgeAddPage() {
   }
 
   async function uploadFile(file: File) {
+    if (!isEnterpriseAdmin(currentUser) && !agentId) {
+      notify.warning('请先选择一个数字员工');
+      return;
+    }
     try {
       const contentBase64 = await fileToBase64(file);
       const suffix = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : '';
@@ -1878,6 +2018,32 @@ function stringFromMetadata(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
+function normalizeMarkdownForDisplay(markdown: string): string {
+  return markdown
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+(#{1,6}\s+)/g, '\n\n$1')
+    .trim();
+}
+
+function documentSourceMarkdown(document: KnowledgeDocumentRead, fallback: string): string {
+  const metadata = document.metadata || {};
+  const rawText = stringFromMetadata(metadata.raw_text) || stringFromMetadata(metadata.content);
+  if (rawText.trim()) return rawText;
+  const sectionTree = Array.isArray(metadata.section_tree) ? metadata.section_tree : [];
+  const sourceBlocks = sectionTree
+    .map((node) => {
+      if (!isRecord(node)) return '';
+      const content = stringFromMetadata(node.content).trim();
+      if (content) return content;
+      const title = stringFromMetadata(node.title).trim();
+      const summary = stringFromMetadata(node.summary).trim();
+      if (title && summary) return `## ${title}\n\n${summary}`;
+      return title || summary;
+    })
+    .filter(Boolean);
+  return sourceBlocks.length ? sourceBlocks.join('\n\n') : fallback;
+}
+
 type KnowledgeDetailView = 'document' | 'sections' | 'wiki';
 type KnowledgeContentView = 'sections' | 'wiki';
 const STRUCTURE_PREVIEW_LIMIT = 8;
@@ -1917,6 +2083,7 @@ function 目录索引Overview({
   const previewConcepts = okfConcepts.slice(0, OKF_PREVIEW_LIMIT);
   const documentTitle = String(documentCard.title || document.title || knowledgeBase?.name || document.filename);
   const documentSummary = String(documentCard.summary || '暂无文档摘要');
+  const sourceMarkdown = useMemo(() => documentSourceMarkdown(document, documentSummary), [document, documentSummary]);
   const openDetail = (view: KnowledgeDetailView, focusKey?: string) => {
     setDetailFocusKey(focusKey || null);
     setDetailView(view);
@@ -1985,7 +2152,9 @@ function 目录索引Overview({
         <div className="knowledge-document-card-body">
           <span className="text-[13px] text-[#858b9c]">文档卡片</span>
           <h5 className="my-[4px] text-[15px] font-semibold text-foreground">{documentTitle}</h5>
-          <p className="m-0 line-clamp-3 text-[13px] text-foreground">{documentSummary}</p>
+          <div className="knowledge-document-card-markdown is-preview">
+            <MarkdownPreview markdown={documentSummary} />
+          </div>
         </div>
         <div className="knowledge-pageindex-actions">
           <UIButton variant="outline" className={OUTLINE_ACTION_BUTTON_SM_CLASS} onClick={() => openDetail('document')}>
@@ -2097,13 +2266,30 @@ function 目录索引Overview({
               <div>
                 <span className="text-[13px] text-[#858b9c]">文档卡片</span>
                 <h4 className="my-[4px] text-[16px] font-semibold text-foreground">{documentTitle}</h4>
-                <p className="m-0 text-[13px] text-foreground">{documentSummary}</p>
               </div>
               <UIButton variant="outline" className={OUTLINE_ACTION_BUTTON_SM_CLASS} onClick={() => onEditDocument(document)}>
                 <EditOutlined />
                 修改
               </UIButton>
             </div>
+            <section className="knowledge-document-md-panel">
+              <div className="knowledge-document-md-panel-head">
+                <strong>文档卡片</strong>
+                <KTag>{document.file_type || 'unknown'}</KTag>
+              </div>
+              <div className="knowledge-document-md-scroll is-summary">
+                <MarkdownPreview markdown={documentSummary} />
+              </div>
+            </section>
+            <section className="knowledge-document-md-panel">
+              <div className="knowledge-document-md-panel-head">
+                <strong>原始资料</strong>
+                <KTag>{Array.isArray(metadata.section_tree) ? metadata.section_tree.length : 0} 段</KTag>
+              </div>
+              <div className="knowledge-document-md-scroll is-source">
+                <MarkdownPreview markdown={sourceMarkdown || '暂无原始资料'} />
+              </div>
+            </section>
             <div className="knowledge-evidence-stat is-inline">
               <strong>{document.file_type || 'unknown'}</strong>
               <span>文件格式</span>
@@ -2304,82 +2490,12 @@ function WikiConceptViewer({ concept }: { concept: KnowledgeConceptRead }) {
 }
 
 function MarkdownPreview({ markdown }: { markdown: string }) {
-  const blocks = splitMarkdownBlocks(markdown);
+  const normalized = normalizeMarkdownForDisplay(markdown);
   return (
-    <div className="flex min-w-0 flex-col gap-[12px] text-[14px] leading-[1.75] text-[#18181a]">
-      {blocks.map((block, index) => {
-        const heading = block.match(/^(#{1,6})\s+(.+)$/);
-        if (heading) {
-          const level = Math.min(4, Math.max(3, heading[1].length + 2));
-          const HeadingTag = (level === 3 ? 'h3' : 'h4') as 'h3' | 'h4';
-          return (
-            <HeadingTag className="text-[15px] font-semibold text-[#18181a]" key={`heading-${index}`}>
-              {heading[2]}
-            </HeadingTag>
-          );
-        }
-        if (block.startsWith('```')) {
-          return (
-            <pre
-              key={`code-${index}`}
-              className="overflow-auto rounded-[12px] border border-[#eceef1] bg-[#fafbfc] p-[14px] font-mono text-[13px] whitespace-pre-wrap wrap-break-word"
-            >
-              {block.replace(/^```[^\n]*\n?|\n?```$/g, '')}
-            </pre>
-          );
-        }
-        if (block.startsWith('>')) {
-          return (
-            <blockquote
-              key={`quote-${index}`}
-              className="rounded-[12px] border-l-[3px] border-[#1a71ff]/45 bg-[#1a71ff]/6 px-[14px] py-[12px] text-[#18181a]"
-            >
-              {block.replace(/^>\s?/gm, '')}
-            </blockquote>
-          );
-        }
-        if (/^[-*]\s+/m.test(block)) {
-          return (
-            <ul key={`list-${index}`} className="list-disc pl-[22px]">
-              {block
-                .split('\n')
-                .map((item) => item.replace(/^[-*]\s+/, '').trim())
-                .filter(Boolean)
-                .map((item, itemIndex) => (
-                  <li key={`list-${index}-${itemIndex}`} className="my-[4px]">{item}</li>
-                ))}
-            </ul>
-          );
-        }
-        if (/^\d+\.\s+/m.test(block)) {
-          return (
-            <ol key={`ordered-${index}`} className="list-decimal pl-[22px]">
-              {block
-                .split('\n')
-                .map((item) => item.replace(/^\d+\.\s+/, '').trim())
-                .filter(Boolean)
-                .map((item, itemIndex) => (
-                  <li key={`ordered-${index}-${itemIndex}`} className="my-[4px]">{item}</li>
-                ))}
-            </ol>
-          );
-        }
-        return (
-          <p key={`paragraph-${index}`}>
-            {block}
-          </p>
-        );
-      })}
+    <div className="knowledge-markdown-preview">
+      {renderMarkdownBlocks(normalized || '暂无内容')}
     </div>
   );
-}
-
-function splitMarkdownBlocks(markdown: string) {
-  return markdown
-    .replace(/\r\n/g, '\n')
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter(Boolean);
 }
 
 function stripOkfFrontmatter(markdown: string) {
