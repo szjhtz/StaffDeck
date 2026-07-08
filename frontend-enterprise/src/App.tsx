@@ -42,7 +42,7 @@ import ModelsPage from './pages/ModelsPage';
 import OpenPlatformPage from './pages/OpenPlatformPage';
 import SkillsPage from './pages/SkillsPage';
 import ScheduledTasksPage, { ScheduledTaskEditPage, ScheduledTaskNewPage } from './pages/ScheduledTasksPage';
-import ToolsPage, { ToolEditPage, ToolNewPage, ToolTestPage } from './pages/ToolsPage';
+import ToolsPage, { McpServerEditPage, McpServerNewPage, ToolEditPage, ToolNewPage, ToolTestPage } from './pages/ToolsPage';
 import { ThemeToggleButton, useThemeController, type EffectiveTheme } from './theme';
 import type { AgentProfileRead } from './types';
 
@@ -361,6 +361,8 @@ function Shell({
               <Route path="/enterprise/models" element={<ModelsPage />} />
               <Route path="/enterprise/tools" element={<ToolsPage />} />
               <Route path="/enterprise/tools/new" element={<ToolNewPage />} />
+              <Route path="/enterprise/tools/mcp/new" element={<McpServerNewPage />} />
+              <Route path="/enterprise/tools/mcp/:serverId/edit" element={<McpServerEditPage />} />
               <Route path="/enterprise/tools/:toolId/edit" element={<ToolEditPage />} />
               <Route path="/enterprise/tools/:toolId/test" element={<ToolTestPage />} />
               <Route path="/enterprise/persona" element={<Navigate to="/enterprise/dashboard" replace />} />

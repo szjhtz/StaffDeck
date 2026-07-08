@@ -1,4 +1,5 @@
 import {
+  ApiOutlined,
   ArrowLeftOutlined,
   DeleteOutlined,
   DownOutlined,
@@ -6,17 +7,26 @@ import {
   PlusOutlined,
   ReloadOutlined,
   SaveOutlined,
+  SyncOutlined,
   TeamOutlined,
   ToolOutlined,
 } from '@ant-design/icons';
-import { AutoComplete, Button, Card, Dropdown, Form, Input, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
+import { AutoComplete, Button, Card, Checkbox, Dropdown, Empty, Form, Input, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd';
 import type { FormInstance } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, TENANT_ID } from '../api/client';
 import CodeBlock from '../components/CodeBlock';
-import type { AgentProfileRead, ToolRead } from '../types';
+import type {
+  AgentProfileRead,
+  MCPDiscoverResponse,
+  MCPServerConnection,
+  MCPServerRead,
+  MCPSyncResponse,
+  MCPTransport,
+  ToolRead,
+} from '../types';
 
 const ENTERPRISE_AGENT_STORAGE_KEY = 'ultrarag_enterprise_agent_scope';
 const TOOL_FORM_INITIAL_VALUES = {
@@ -31,6 +41,23 @@ const TOOL_FORM_INITIAL_VALUES = {
   output_schema: '{}',
 };
 
+const TRANSPORT_OPTIONS: { value: MCPTransport; label: string; hint: string }[] = [
+  { value: 'streamable_http', label: 'Streamable HTTP', hint: '通过 HTTP(S) 连接远程 MCP Server' },
+  { value: 'sse', label: 'SSE', hint: '通过 Server-Sent Events 连接远程 MCP Server' },
+  { value: 'stdio', label: 'Stdio（本地命令）', hint: '启动本地进程并通过标准输入输出通信' },
+  { value: 'builtin', label: '内置 Demo', hint: '使用内置的 builtin.demo MCP，仅用于演示' },
+];
+
+const DEFAULT_MCP_CONNECTION: MCPServerConnection = {
+  transport: 'streamable_http',
+  url: '',
+  headers: {},
+  command: '',
+  args: [],
+  env: {},
+  cwd: '',
+};
+
 type ToolFormValues = typeof TOOL_FORM_INITIAL_VALUES & {
   name?: string;
   display_name?: string;
@@ -39,8 +66,17 @@ type ToolFormValues = typeof TOOL_FORM_INITIAL_VALUES & {
   url?: string;
 };
 
+type ToolTreeRow = {
+  key: string;
+  kind: 'server' | 'tool';
+  server?: MCPServerRead;
+  tool?: ToolRead;
+  children?: ToolTreeRow[];
+};
+
 export default function ToolsPage() {
   const [rows, setRows] = useState<ToolRead[]>([]);
+  const [servers, setServers] = useState<MCPServerRead[]>([]);
   const [agentId, setAgentId] = useState(() => window.localStorage.getItem(ENTERPRISE_AGENT_STORAGE_KEY) || '');
   const [isOverallAgent, setIsOverallAgent] = useState(true);
   const [agentScopeLoaded, setAgentScopeLoaded] = useState(false);
@@ -50,9 +86,14 @@ export default function ToolsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const load = () =>
-    api
-      .get<ToolRead[]>(`/api/enterprise/tools?tenant_id=${TENANT_ID}`)
-      .then(setRows)
+    Promise.all([
+      api.get<ToolRead[]>(`/api/enterprise/tools?tenant_id=${TENANT_ID}`),
+      api.get<MCPServerRead[]>(`/api/enterprise/mcp-servers?tenant_id=${TENANT_ID}`).catch(() => [] as MCPServerRead[]),
+    ])
+      .then(([toolRows, serverRows]) => {
+        setRows(toolRows);
+        setServers(serverRows);
+      })
       .catch((error) => message.error(error.message));
 
   useEffect(() => {
@@ -112,58 +153,195 @@ export default function ToolsPage() {
     });
   }
 
-  const columns: ColumnsType<ToolRead> = [
-    { title: '工具名称', dataIndex: 'name', width: 170, ellipsis: true },
-    { title: '展示名称', dataIndex: 'display_name', width: 160, ellipsis: true },
-    {
-      title: '分桶',
-      dataIndex: 'bucket',
-      width: 130,
-      render: (value) => <Tag className="tool-bucket-tag">{value || '未分桶'}</Tag>,
-    },
-    {
-      title: '类型',
-      dataIndex: 'tool_type',
-      width: 88,
-      render: (value) => <Tag color={value === 'mcp' ? 'geekblue' : undefined}>{value === 'mcp' ? 'MCP' : 'HTTP'}</Tag>,
-    },
-    { title: 'Method', dataIndex: 'method', width: 96 },
-    { title: 'URL', dataIndex: 'url', width: 280, ellipsis: true },
-    { title: '启用', dataIndex: 'enabled', width: 80, render: (value) => (value ? '是' : '否') },
-    {
-      title: '操作',
-      width: 244,
-      render: (_, row) => (
-        <span className="table-actions">
-          <Button size="small" onClick={() => navigate(`/enterprise/tools/${row.id}/edit`)}>编辑</Button>
-          <Button size="small" icon={<ExperimentOutlined />} onClick={() => navigate(`/enterprise/tools/${row.id}/test`)}>测试</Button>
-          {isOverallAgent && <Button size="small" danger icon={<DeleteOutlined />} onClick={() => void remove(row)}>删除</Button>}
-        </span>
-      ),
-    },
-  ];
+  async function removeServer(server: MCPServerRead) {
+    Modal.confirm({
+      title: '删除 MCP 服务器？',
+      content: `确认删除工具集「${server.display_name || server.name}」？其下 ${server.tool_count} 个已导入工具将一并删除。`,
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        const agentQuery = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : '';
+        await api.delete(`/api/enterprise/mcp-servers/${server.id}?tenant_id=${TENANT_ID}${agentQuery}&remove_tools=true`);
+        message.success('已删除');
+        load();
+      },
+    });
+  }
 
   const visibleRows = useMemo(() => (isOverallAgent ? rows : rows.filter((row) => row.enabled)), [isOverallAgent, rows]);
   const bucketStats = useMemo(() => buildBucketStats(visibleRows), [visibleRows]);
-  const filteredRows = useMemo(() => {
+
+  const filteredFlat = useMemo(() => {
     const text = searchText.trim().toLowerCase();
     return visibleRows.filter((row) => {
       const bucketMatch = bucketFilter === '__all__' || (row.bucket || '未分桶') === bucketFilter;
       if (!bucketMatch) return false;
       if (!text) return true;
-      return [
-        row.name,
-        row.display_name || '',
-        row.description || '',
-        row.bucket || '',
-        row.url,
-      ].some((value) => value.toLowerCase().includes(text));
+      return [row.name, row.display_name || '', row.description || '', row.bucket || '', row.url].some((value) =>
+        value.toLowerCase().includes(text),
+      );
     });
   }, [bucketFilter, searchText, visibleRows]);
+
+  const treeData = useMemo<ToolTreeRow[]>(() => {
+    const serverById = new Map(servers.map((server) => [server.id, server]));
+    const childrenByServer = new Map<string, ToolTreeRow[]>();
+    const flatTools: ToolTreeRow[] = [];
+    filteredFlat.forEach((tool) => {
+      if (tool.mcp_server_id && serverById.has(tool.mcp_server_id)) {
+        const list = childrenByServer.get(tool.mcp_server_id) || [];
+        list.push({ key: `tool:${tool.id}`, kind: 'tool', tool });
+        childrenByServer.set(tool.mcp_server_id, list);
+        return;
+      }
+      flatTools.push({ key: `tool:${tool.id}`, kind: 'tool', tool });
+    });
+
+    const text = searchText.trim().toLowerCase();
+    const serverRows: ToolTreeRow[] = servers
+      .filter((server) => bucketFilter === '__all__' || (server.bucket || 'MCP 工具') === bucketFilter)
+      .filter((server) => {
+        if (!text) return true;
+        const children = childrenByServer.get(server.id) || [];
+        return (
+          [server.name, server.display_name || '', server.description || ''].some((value) => value.toLowerCase().includes(text)) ||
+          children.length > 0
+        );
+      })
+      .map((server) => ({
+        key: `server:${server.id}`,
+        kind: 'server' as const,
+        server,
+        children: childrenByServer.get(server.id) || [],
+      }));
+
+    return [...serverRows, ...flatTools];
+  }, [servers, filteredFlat, bucketFilter, searchText]);
+
+  const totalVisible = filteredFlat.length + servers.length;
+
+  const columns: ColumnsType<ToolTreeRow> = [
+    {
+      title: '名称 / 工具集',
+      key: 'name',
+      width: 260,
+      render: (_, record) => {
+        if (record.kind === 'server' && record.server) {
+          return (
+            <Space>
+              <ApiOutlined style={{ color: '#2f54eb' }} />
+              <strong>{record.server.display_name || record.server.name}</strong>
+              <Tag color="purple">工具集</Tag>
+            </Space>
+          );
+        }
+        return <span>{record.tool?.name}</span>;
+      },
+    },
+    {
+      title: '展示名称',
+      key: 'display_name',
+      width: 180,
+      ellipsis: true,
+      render: (_, record) =>
+        record.kind === 'server' ? record.server?.description || '—' : record.tool?.display_name || '—',
+    },
+    {
+      title: '分桶',
+      key: 'bucket',
+      width: 120,
+      render: (_, record) => (
+        <Tag className="tool-bucket-tag">
+          {(record.kind === 'server' ? record.server?.bucket : record.tool?.bucket) || '未分桶'}
+        </Tag>
+      ),
+    },
+    {
+      title: '类型 / 连接',
+      key: 'type',
+      width: 150,
+      render: (_, record) => {
+        if (record.kind === 'server' && record.server) {
+          return <Tag color="geekblue">{transportLabel(record.server.connection.transport)}</Tag>;
+        }
+        return <Tag color={record.tool?.tool_type === 'mcp' ? 'geekblue' : undefined}>{record.tool?.tool_type === 'mcp' ? 'MCP' : 'HTTP'}</Tag>;
+      },
+    },
+    {
+      title: '端点 / URL',
+      key: 'url',
+      width: 260,
+      ellipsis: true,
+      render: (_, record) => {
+        if (record.kind === 'server' && record.server) {
+          const conn = record.server.connection;
+          return conn.transport === 'stdio' ? conn.command || '—' : conn.url || (conn.transport === 'builtin' ? 'builtin.demo' : '—');
+        }
+        return record.tool?.url;
+      },
+    },
+    {
+      title: '启用 / 工具数',
+      key: 'enabled',
+      width: 110,
+      render: (_, record) => {
+        if (record.kind === 'server' && record.server) {
+          return <span>{record.server.tool_count} 个工具</span>;
+        }
+        return record.tool?.enabled ? '是' : '否';
+      },
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 300,
+      render: (_, record) => {
+        if (record.kind === 'server' && record.server) {
+          const server = record.server;
+          return (
+            <span className="table-actions">
+              <Button size="small" icon={<SyncOutlined />} onClick={() => navigate(`/enterprise/tools/mcp/${server.id}/edit`)}>
+                发现 / 同步
+              </Button>
+              {isOverallAgent && (
+                <Button size="small" danger icon={<DeleteOutlined />} onClick={() => void removeServer(server)}>
+                  删除
+                </Button>
+              )}
+            </span>
+          );
+        }
+        const tool = record.tool!;
+        const isMcpChild = tool.tool_type === 'mcp' && Boolean(tool.mcp_server_id);
+        return (
+          <span className="table-actions">
+            {!isMcpChild && (
+              <Button size="small" onClick={() => navigate(`/enterprise/tools/${tool.id}/edit`)}>
+                编辑
+              </Button>
+            )}
+            <Button size="small" icon={<ExperimentOutlined />} onClick={() => navigate(`/enterprise/tools/${tool.id}/test`)}>
+              测试
+            </Button>
+            {isOverallAgent && !isMcpChild && (
+              <Button size="small" danger icon={<DeleteOutlined />} onClick={() => void remove(tool)}>
+                删除
+              </Button>
+            )}
+          </span>
+        );
+      },
+    },
+  ];
 
   function handleCreateAction(key: string) {
     if (key === 'blank') {
       navigate('/enterprise/tools/new');
+      return;
+    }
+    if (key === 'mcp') {
+      navigate('/enterprise/tools/mcp/new');
       return;
     }
     if (key === 'plaza') {
@@ -181,7 +359,9 @@ export default function ToolsPage() {
         <div>
           <Typography.Title level={3}>{isOverallAgent ? '工具广场' : '工具箱'}</Typography.Title>
           <Typography.Text type="secondary">
-            {isOverallAgent ? '管理可开放给员工调用的工具能力。' : '查看当前员工可调用的工具能力。'}
+            {isOverallAgent
+              ? '管理可开放给员工调用的工具能力，包括 HTTP 工具与 MCP 工具集。'
+              : '查看当前员工可调用的工具能力。'}
           </Typography.Text>
         </div>
       </div>
@@ -195,7 +375,8 @@ export default function ToolsPage() {
               trigger={['click']}
               menu={{
                 items: [
-                  { key: 'blank', icon: <PlusOutlined />, label: '新建空白工具' },
+                  { key: 'blank', icon: <PlusOutlined />, label: '新建 HTTP 工具' },
+                  { key: 'mcp', icon: <ApiOutlined />, label: '添加 MCP 服务器（工具集）' },
                   ...(!isOverallAgent ? [{ key: 'plaza', icon: <ToolOutlined />, label: '从工具广场新增' }] : []),
                   ...(!isOverallAgent ? [{ key: 'employee', icon: <TeamOutlined />, label: '向其他员工学习工具' }] : []),
                 ],
@@ -235,19 +416,20 @@ export default function ToolsPage() {
         <div className="tool-filter-bar">
           <Input.Search
             allowClear
-            placeholder="搜索工具名称、描述、URL 或分桶"
+            placeholder="搜索工具、工具集名称、描述或 URL"
             value={searchText}
             onChange={(event) => setSearchText(event.target.value)}
           />
-          <Typography.Text type="secondary">当前显示 {filteredRows.length} / {visibleRows.length} 个工具</Typography.Text>
+          <Typography.Text type="secondary">当前显示 {treeData.length} 项（共 {totalVisible} 项）</Typography.Text>
         </div>
         <Table
-          rowKey="id"
+          rowKey="key"
           columns={columns}
-          dataSource={filteredRows}
-          pagination={{ pageSize: 8 }}
-          scroll={{ x: 1080 }}
+          dataSource={treeData}
+          pagination={{ pageSize: 10 }}
+          scroll={{ x: 1180 }}
           size="middle"
+          expandable={{ defaultExpandAllRows: false }}
         />
       </Card>
     </>
@@ -450,42 +632,49 @@ function ToolFormFields({
   bucketOptions: { value: string; label: string }[];
 }) {
   const toolType = Form.useWatch('tool_type', form) || 'http';
+  const isMcp = toolType === 'mcp';
   return (
     <Form form={form} layout="vertical" initialValues={TOOL_FORM_INITIAL_VALUES}>
       <Form.Item name="name" label="工具名称" rules={[{ required: true }]}>
-        <Input prefix={<ToolOutlined />} />
+        <Input prefix={<ToolOutlined />} disabled={isMcp} />
       </Form.Item>
       <Form.Item name="display_name" label="展示名称"><Input /></Form.Item>
-      <Form.Item name="tool_type" label="工具类型" rules={[{ required: true }]}>
-        <Select
-          options={[
-            { value: 'http', label: 'HTTP 工具' },
-            { value: 'mcp', label: 'MCP 工具' },
-          ]}
-        />
-      </Form.Item>
+      {isMcp ? (
+        <Form.Item label="工具类型">
+          <Tag color="geekblue">MCP 工具（由 MCP 服务器发现）</Tag>
+          <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+            该工具属于某个 MCP 工具集，连接方式与元信息由 MCP 服务器自动发现。请在对应的 MCP 服务器页面重新发现 / 同步以更新。
+          </Typography.Paragraph>
+        </Form.Item>
+      ) : (
+        <Form.Item name="tool_type" label="工具类型" rules={[{ required: true }]}>
+          <Select
+            disabled
+            options={[
+              { value: 'http', label: 'HTTP 工具' },
+              { value: 'mcp', label: 'MCP 工具' },
+            ]}
+          />
+        </Form.Item>
+      )}
       <Form.Item name="bucket" label="工具分桶">
         <AutoComplete placeholder="选择或输入分桶" options={bucketOptions} />
       </Form.Item>
       <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
-      <Form.Item name="method" label={toolType === 'mcp' ? 'Method 标记' : 'HTTP Method'}>
-        <Select options={['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((value) => ({ value, label: value }))} />
-      </Form.Item>
-      <Form.Item name="url" label={toolType === 'mcp' ? 'MCP URL 标记' : 'URL'} rules={[{ required: true }]}>
-        <Input placeholder={toolType === 'mcp' ? 'mcp://builtin.demo/echo' : '/api/mock/order/query'} />
-      </Form.Item>
-      {toolType === 'mcp' ? (
-        <Form.Item name="mcp_config" label="MCP Config JSON" rules={[{ required: true }]}>
-          <Input.TextArea rows={4} placeholder={'{\n  "server": "builtin.demo",\n  "tool": "echo"\n}'} />
-        </Form.Item>
-      ) : (
+      {!isMcp && (
         <>
+          <Form.Item name="method" label="HTTP Method">
+            <Select options={['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((value) => ({ value, label: value }))} />
+          </Form.Item>
+          <Form.Item name="url" label="URL" rules={[{ required: true }]}>
+            <Input placeholder="/api/mock/order/query" />
+          </Form.Item>
           <Form.Item name="headers" label="Headers JSON"><Input.TextArea rows={4} /></Form.Item>
           <Form.Item name="auth" label="Auth JSON"><Input.TextArea rows={3} /></Form.Item>
         </>
       )}
-      <Form.Item name="input_schema" label="Input Schema"><Input.TextArea rows={5} /></Form.Item>
-      <Form.Item name="output_schema" label="Output Schema"><Input.TextArea rows={5} /></Form.Item>
+      <Form.Item name="input_schema" label="Input Schema"><Input.TextArea rows={5} readOnly={isMcp} /></Form.Item>
+      <Form.Item name="output_schema" label="Output Schema"><Input.TextArea rows={5} readOnly={isMcp} /></Form.Item>
       <Form.Item name="allowed_skills" label="Allowed Skills"><Input placeholder="skill_id_1,skill_id_2" /></Form.Item>
       <Form.Item name="enabled" label="启用" valuePropName="checked"><Switch /></Form.Item>
     </Form>
@@ -640,6 +829,343 @@ function toolToFormValues(row: ToolRead): ToolFormValues {
     output_schema: JSON.stringify(row.output_schema || {}, null, 2),
     allowed_skills: (row.allowed_skills || []).join(','),
   };
+}
+
+// -------------------------------------------------------------------------- //
+// MCP 服务器（工具集）编辑页
+// -------------------------------------------------------------------------- //
+
+export function McpServerNewPage() {
+  return <McpServerEditorPage mode="new" />;
+}
+
+export function McpServerEditPage() {
+  return <McpServerEditorPage mode="edit" />;
+}
+
+type McpServerFormValues = {
+  name?: string;
+  display_name?: string;
+  description?: string;
+  bucket: string;
+  transport: MCPTransport;
+  url?: string;
+  headers?: string;
+  command?: string;
+  args?: string;
+  env?: string;
+  cwd?: string;
+  enabled: boolean;
+};
+
+const MCP_SERVER_INITIAL: McpServerFormValues = {
+  bucket: 'MCP 工具',
+  transport: 'streamable_http',
+  url: '',
+  headers: '{}',
+  command: '',
+  args: '',
+  env: '{}',
+  cwd: '',
+  enabled: true,
+};
+
+type DiscoveredRow = MCPDiscoverResponse['tools'][number] & { selected: boolean };
+
+function McpServerEditorPage({ mode }: { mode: 'new' | 'edit' }) {
+  const [form] = Form.useForm<McpServerFormValues>();
+  const [server, setServer] = useState<MCPServerRead | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [discovered, setDiscovered] = useState<DiscoveredRow[]>([]);
+  const navigate = useNavigate();
+  const { serverId } = useParams();
+  const isEdit = mode === 'edit';
+  const transport = Form.useWatch('transport', form) || 'streamable_http';
+
+  useEffect(() => {
+    if (!isEdit) {
+      form.setFieldsValue(MCP_SERVER_INITIAL);
+      setServer(null);
+      return;
+    }
+    if (!serverId) return;
+    setLoading(true);
+    api
+      .get<MCPServerRead>(`/api/enterprise/mcp-servers/${serverId}?tenant_id=${TENANT_ID}`)
+      .then((row) => {
+        setServer(row);
+        form.setFieldsValue(serverToFormValues(row));
+      })
+      .catch((error) => message.error(error instanceof Error ? error.message : '加载 MCP 服务器失败'))
+      .finally(() => setLoading(false));
+  }, [form, isEdit, serverId]);
+
+  function buildConnection(values: McpServerFormValues): MCPServerConnection | null {
+    try {
+      return {
+        transport: values.transport,
+        url: values.transport === 'streamable_http' || values.transport === 'sse' ? values.url || '' : null,
+        headers: parseJson(values.headers || '{}', {}),
+        command: values.transport === 'stdio' ? values.command || '' : null,
+        args: parseArgs(values.args || ''),
+        env: parseJson(values.env || '{}', {}),
+        cwd: values.transport === 'stdio' ? values.cwd || null : null,
+      };
+    } catch {
+      message.error('Headers 或 Env 不是合法 JSON');
+      return null;
+    }
+  }
+
+  async function buildPayload(): Promise<{ payload: Record<string, unknown>; connection: MCPServerConnection } | null> {
+    let values: McpServerFormValues;
+    try {
+      values = await form.validateFields();
+    } catch {
+      return null;
+    }
+    const connection = buildConnection(values);
+    if (!connection) return null;
+    return {
+      connection,
+      payload: {
+        tenant_id: TENANT_ID,
+        name: String(values.name || '').trim(),
+        display_name: values.display_name,
+        description: values.description,
+        bucket: values.bucket || 'MCP 工具',
+        connection,
+        enabled: values.enabled,
+      },
+    };
+  }
+
+  async function save() {
+    const built = await buildPayload();
+    if (!built) return;
+    setLoading(true);
+    try {
+      const saved = isEdit && serverId
+        ? await api.put<MCPServerRead>(`/api/enterprise/mcp-servers/${serverId}`, built.payload)
+        : await api.post<MCPServerRead>('/api/enterprise/mcp-servers', built.payload);
+      message.success('已保存');
+      setServer(saved);
+      form.setFieldsValue(serverToFormValues(saved));
+      if (!isEdit) {
+        navigate(`/enterprise/tools/mcp/${saved.id}/edit`, { replace: true });
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '保存失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function discover() {
+    const built = await buildPayload();
+    if (!built) return;
+    setDiscovering(true);
+    try {
+      const response = server
+        ? await api.post<MCPDiscoverResponse>(`/api/enterprise/mcp-servers/${server.id}/discover`, {
+            tenant_id: TENANT_ID,
+            connection: built.connection,
+          })
+        : await api.post<MCPDiscoverResponse>('/api/enterprise/mcp-servers/discover', {
+            tenant_id: TENANT_ID,
+            connection: built.connection,
+          });
+      if (!response.success) {
+        message.error(response.error?.message || '发现工具失败');
+        setDiscovered([]);
+        return;
+      }
+      setDiscovered(response.tools.map((tool) => ({ ...tool, selected: !tool.imported })));
+      message.success(`发现 ${response.tools.length} 个工具`);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '发现工具失败');
+    } finally {
+      setDiscovering(false);
+    }
+  }
+
+  async function sync() {
+    if (!server) {
+      message.warning('请先保存 MCP 服务器，再同步工具');
+      return;
+    }
+    const selected = discovered.filter((tool) => tool.selected).map((tool) => tool.name);
+    if (discovered.length > 0 && selected.length === 0) {
+      message.warning('请至少勾选一个要导入的工具');
+      return;
+    }
+    setSyncing(true);
+    try {
+      const response = await api.post<MCPSyncResponse>(`/api/enterprise/mcp-servers/${server.id}/sync`, {
+        tenant_id: TENANT_ID,
+        tool_names: discovered.length > 0 ? selected : null,
+      });
+      if (!response.success) {
+        message.error(response.error?.message || '同步失败');
+        return;
+      }
+      message.success(`同步完成：新增 ${response.imported.length}，更新 ${response.updated.length}`);
+      const refreshed = await api.get<MCPServerRead>(`/api/enterprise/mcp-servers/${server.id}?tenant_id=${TENANT_ID}`);
+      setServer(refreshed);
+      await discover();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '同步失败');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  const discoveredColumns: ColumnsType<DiscoveredRow> = [
+    {
+      title: '',
+      dataIndex: 'selected',
+      width: 40,
+      render: (_, record) => (
+        <Checkbox
+          checked={record.selected}
+          onChange={(event) =>
+            setDiscovered((prev) =>
+              prev.map((item) => (item.name === record.name ? { ...item, selected: event.target.checked } : item)),
+            )
+          }
+        />
+      ),
+    },
+    { title: '工具名', dataIndex: 'name', width: 160, ellipsis: true },
+    { title: '描述', dataIndex: 'description', ellipsis: true, render: (value) => value || '—' },
+    {
+      title: '状态',
+      dataIndex: 'imported',
+      width: 96,
+      render: (value) => (value ? <Tag color="green">已导入</Tag> : <Tag>未导入</Tag>),
+    },
+  ];
+
+  return (
+    <>
+      <div className="page-title">
+        <div>
+          <Typography.Title level={3}>{isEdit ? '编辑 MCP 服务器' : '添加 MCP 服务器'}</Typography.Title>
+          <Typography.Text type="secondary">
+            配置 MCP Server 连接方式即可，工具列表通过 tools/list 自动发现，无需手动填写每个工具的 Method 或 Schema。
+          </Typography.Text>
+        </div>
+        <Space>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/enterprise/tools')}>返回工具箱</Button>
+          <Button type="primary" icon={<SaveOutlined />} loading={loading} onClick={() => void save()}>保存</Button>
+        </Space>
+      </div>
+      <div className="grid-2">
+        <Card className="editor-card" title="连接配置" loading={loading && isEdit && !server}>
+          <Form form={form} layout="vertical" initialValues={MCP_SERVER_INITIAL}>
+            <Form.Item name="name" label="服务器标识（唯一）" rules={[{ required: true }]}>
+              <Input prefix={<ApiOutlined />} placeholder="例如 github_mcp" disabled={isEdit} />
+            </Form.Item>
+            <Form.Item name="display_name" label="展示名称"><Input placeholder="例如 GitHub MCP" /></Form.Item>
+            <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
+            <Form.Item name="bucket" label="工具分桶"><Input placeholder="MCP 工具" /></Form.Item>
+            <Form.Item name="transport" label="连接方式（Transport）" rules={[{ required: true }]}>
+              <Select options={TRANSPORT_OPTIONS.map((item) => ({ value: item.value, label: item.label }))} />
+            </Form.Item>
+            <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
+              {TRANSPORT_OPTIONS.find((item) => item.value === transport)?.hint}
+            </Typography.Paragraph>
+            {(transport === 'streamable_http' || transport === 'sse') && (
+              <>
+                <Form.Item name="url" label="Server URL" rules={[{ required: true }]}>
+                  <Input placeholder="https://example.com/mcp" />
+                </Form.Item>
+                <Form.Item name="headers" label="Headers JSON（可选）">
+                  <Input.TextArea rows={4} placeholder={'{\n  "Authorization": "Bearer ${secret.MCP_TOKEN}"\n}'} />
+                </Form.Item>
+              </>
+            )}
+            {transport === 'stdio' && (
+              <>
+                <Form.Item name="command" label="启动命令" rules={[{ required: true }]}>
+                  <Input placeholder="npx" />
+                </Form.Item>
+                <Form.Item name="args" label="命令参数（每行一个，或空格分隔）">
+                  <Input.TextArea rows={3} placeholder={'-y\n@modelcontextprotocol/server-github'} />
+                </Form.Item>
+                <Form.Item name="env" label="环境变量 JSON（可选）">
+                  <Input.TextArea rows={3} placeholder={'{\n  "GITHUB_TOKEN": "${secret.GITHUB_TOKEN}"\n}'} />
+                </Form.Item>
+                <Form.Item name="cwd" label="工作目录（可选）"><Input placeholder="/path/to/workdir" /></Form.Item>
+              </>
+            )}
+            <Form.Item name="enabled" label="启用" valuePropName="checked"><Switch /></Form.Item>
+          </Form>
+        </Card>
+        <Card
+          className="editor-card"
+          title="工具发现（tools/list）"
+          extra={(
+            <Space>
+              <Button icon={<SyncOutlined />} loading={discovering} onClick={() => void discover()}>发现工具</Button>
+              <Button type="primary" loading={syncing} disabled={!server} onClick={() => void sync()}>导入 / 同步</Button>
+            </Space>
+          )}
+        >
+          <Typography.Paragraph type="secondary">
+            点击「发现工具」连接 MCP Server 并拉取工具列表；勾选需要导入的工具后点击「导入 / 同步」，工具会自动落入工具箱（含 Input/Output Schema）。
+          </Typography.Paragraph>
+          {discovered.length > 0 ? (
+            <Table
+              rowKey="name"
+              size="small"
+              columns={discoveredColumns}
+              dataSource={discovered}
+              pagination={false}
+            />
+          ) : (
+            <Empty description={server ? '尚未发现工具，点击上方「发现工具」' : '保存后可发现并同步工具（也可先发现预览）'} />
+          )}
+        </Card>
+      </div>
+    </>
+  );
+}
+
+function serverToFormValues(row: MCPServerRead): McpServerFormValues {
+  const conn = row.connection;
+  return {
+    name: row.name,
+    display_name: row.display_name,
+    description: row.description,
+    bucket: row.bucket || 'MCP 工具',
+    transport: conn.transport,
+    url: conn.url || '',
+    headers: JSON.stringify(conn.headers || {}, null, 2),
+    command: conn.command || '',
+    args: (conn.args || []).join('\n'),
+    env: JSON.stringify(conn.env || {}, null, 2),
+    cwd: conn.cwd || '',
+    enabled: row.enabled,
+  };
+}
+
+function parseArgs(value: string): string[] {
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  if (trimmed.includes('\n')) {
+    return trimmed
+      .split('\n')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return trimmed.split(/\s+/).filter(Boolean);
+}
+
+function transportLabel(transport: MCPTransport | string): string {
+  return TRANSPORT_OPTIONS.find((item) => item.value === transport)?.label || String(transport);
 }
 
 function buildToolPayload(values: ToolFormValues) {
