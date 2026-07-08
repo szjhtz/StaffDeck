@@ -24,6 +24,11 @@ export type ResourceImportDialogProps = {
   /** Header icon (14px). */
   icon: ReactNode;
   title: string;
+  /** Optional target select for flows where the destination is not implied by page scope. */
+  targetPlaceholder?: string;
+  targetLabel?: string;
+  targets?: ImportSourceOption[];
+  targetId?: string;
   /** Placeholder for the "copy source" select. */
   sourcePlaceholder: string;
   sources: ImportSourceOption[];
@@ -39,6 +44,7 @@ export type ResourceImportDialogProps = {
   /** Explanatory footer note. */
   note: ReactNode;
   submitText?: string;
+  onTargetChange?: (value: string) => void;
   onSourceChange: (value: string) => void;
   onSelectedChange: (ids: string[]) => void;
   onClose: () => void;
@@ -54,6 +60,10 @@ export function ResourceImportDialog({
   loading,
   icon,
   title,
+  targetPlaceholder,
+  targetLabel = '复制到',
+  targets,
+  targetId,
   sourcePlaceholder,
   sources,
   sourceId,
@@ -64,11 +74,13 @@ export function ResourceImportDialog({
   emptySourceText = '请先选择复制来源',
   note,
   submitText = '复制',
+  onTargetChange,
   onSourceChange,
   onSelectedChange,
   onClose,
   onSubmit,
 }: ResourceImportDialogProps) {
+  const showTargetSelect = Boolean(targets && onTargetChange);
   const toggle = (id: string, checked: boolean) => {
     onSelectedChange(checked ? [...selectedIds, id] : selectedIds.filter((value) => value !== id));
   };
@@ -86,6 +98,24 @@ export function ResourceImportDialog({
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col gap-[14px] overflow-y-auto px-[12px]">
+          {showTargetSelect && (
+            <div className="flex flex-col gap-[6px]">
+              <span className="text-[11px] font-semibold text-[#858b9c]">{targetLabel}</span>
+              <Select value={targetId || undefined} onValueChange={onTargetChange}>
+                <SelectTrigger className={cn(SELECT_TRIGGER_CLASS, 'w-full')}>
+                  <SelectValue placeholder={targetPlaceholder || targetLabel} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(targets || []).map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <div className="flex flex-col gap-[6px]">
             <span className="text-[11px] font-semibold text-[#858b9c]">复制来源</span>
             <Select value={sourceId || undefined} onValueChange={onSourceChange}>

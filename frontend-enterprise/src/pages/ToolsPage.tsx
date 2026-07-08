@@ -49,7 +49,7 @@ import IconRefresh from '../assets/icons/refresh.svg?react';
 import IconSearch from '../assets/icons/search.svg?react';
 import IconTool from '../assets/icons/plaza-tool.svg?react';
 import IconTrash from '../assets/icons/trash.svg?react';
-import { resourceCreatorNameOrAdmin, visibleEmployeeAgents } from '../employee';
+import { canManageEmployeeAgent, resourceCreatorNameOrAdmin, visibleEmployeeAgents } from '../employee';
 import { useClientPagination } from '../hooks/useClientPagination';
 import { StatusBadge } from './scheduled-tasks/StatusBadge';
 import type { AgentProfileRead, ToolRead } from '../types';
@@ -92,6 +92,7 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
   const [agents, setAgents] = useState<AgentProfileRead[]>([]);
   const [importOpen, setImportOpen] = useState(false);
   const [importMode, setImportMode] = useState<'plaza' | 'employee'>('plaza');
+  const [importTargetAgentId, setImportTargetAgentId] = useState('');
   const [importSourceAgentId, setImportSourceAgentId] = useState('');
   const [importSourceTools, setImportSourceTools] = useState<ToolRead[]>([]);
   const [importSelectedToolIds, setImportSelectedToolIds] = useState<string[]>([]);
@@ -148,11 +149,7 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
     if (searchParams.get('add') !== 'plaza') return;
     if (!agentScopeLoaded) return;
     const resourceId = searchParams.get('resourceId') || undefined;
-    if (isOverallAgent) {
-      notify.warning('请先选择一个数字员工，再从广场复制工具');
-    } else {
-      void openImportTools('plaza', resourceId);
-    }
+    void openImportTools('plaza', resourceId);
     const next = new URLSearchParams(searchParams);
     next.delete('add');
     next.delete('resourceId');
@@ -220,18 +217,10 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
       return;
     }
     if (key === 'plaza') {
-      if (isOverallAgent) {
-        notify.warning('请先选择一个数字员工，再从广场复制工具');
-        return;
-      }
       void openImportTools('plaza');
       return;
     }
     if (key === 'employee') {
-      if (isOverallAgent) {
-        notify.warning('请先选择一个数字员工，再从数字员工复制工具');
-        return;
-      }
       void openImportTools('employee');
     }
   }
@@ -243,9 +232,19 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
         : await api.get<AgentProfileRead[]>(`/api/enterprise/agents?tenant_id=${TENANT_ID}`);
       setAgents(agentRows);
       setImportMode(mode);
+      const targetCandidates = importTargetCandidates(agentRows);
+      const nextTargetAgentId =
+        targetCandidates.find((item) => item.id === agentId)?.id
+        || targetCandidates[0]?.id
+        || '';
+      if (!nextTargetAgentId) {
+        notify.warning('请先创建或选择一个数字员工，再复制工具');
+        return;
+      }
+      setImportTargetAgentId(nextTargetAgentId);
       const candidates = mode === 'plaza'
-        ? agentRows.filter((item) => item.id !== agentId && item.is_overall)
-        : visibleEmployeeAgents(agentRows, currentUser, { activeOnly: true, excludeAgentId: agentId });
+        ? agentRows.filter((item) => item.id !== nextTargetAgentId && item.is_overall)
+        : visibleEmployeeAgents(agentRows, currentUser, { activeOnly: true, excludeAgentId: nextTargetAgentId });
       const firstSource = candidates[0]?.id || '';
       setImportSourceAgentId(firstSource);
       setImportSelectedToolIds([]);
@@ -281,8 +280,9 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
   }
 
   async function submitImportTools() {
-    if (!agentId) {
-      notify.warning('请先选择一个数字员工');
+    const targetAgentId = importTargetAgentId || (!isOverallAgent ? agentId : '');
+    if (!targetAgentId) {
+      notify.warning('请选择要复制到的数字员工');
       return;
     }
     if (!importSourceAgentId) {
@@ -296,7 +296,7 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
     setImportLoading(true);
     try {
       const result = await api.post<{ imported: Array<Record<string, unknown>>; missing: Array<Record<string, unknown>> }>(
-        `/api/enterprise/agents/${agentId}/resources/import`,
+        `/api/enterprise/agents/${targetAgentId}/resources/import`,
         {
           tenant_id: TENANT_ID,
           source_agent_id: importSourceAgentId,
@@ -308,12 +308,37 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
       const missingCount = result.missing?.length || 0;
       notify.success(`已复制 ${importedCount} 个工具${missingCount ? `，${missingCount} 个未复制` : ''}`);
       setImportOpen(false);
-      await load();
+      if (targetAgentId !== agentId) {
+        window.localStorage.setItem(ENTERPRISE_AGENT_STORAGE_KEY, targetAgentId);
+        window.dispatchEvent(new CustomEvent('ultrarag-enterprise-agent-scope-change', { detail: { agentId: targetAgentId } }));
+        setAgentId(targetAgentId);
+      } else {
+        await load();
+      }
     } catch (error) {
       notify.error(error instanceof Error ? error.message : '复制工具失败');
     } finally {
       setImportLoading(false);
     }
+  }
+
+  function importTargetCandidates(agentRows: AgentProfileRead[] = agents): AgentProfileRead[] {
+    return agentRows.filter((item) => (
+      !item.is_overall
+      && item.status === 'active'
+      && canManageEmployeeAgent(item, currentUser)
+    ));
+  }
+
+  function handleImportTargetChange(nextTargetAgentId: string) {
+    setImportTargetAgentId(nextTargetAgentId);
+    if (importMode !== 'employee' || importSourceAgentId !== nextTargetAgentId) return;
+    const nextSource = visibleEmployeeAgents(agents, currentUser, {
+      activeOnly: true,
+      excludeAgentId: nextTargetAgentId,
+    })[0]?.id || '';
+    setImportSourceAgentId(nextSource);
+    void loadImportSourceTools(nextSource);
   }
 
   function renderActions(row: ToolRead) {
@@ -562,9 +587,13 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
         loading={importLoading}
         icon={<IconTool className="size-[14px] shrink-0" />}
         title={importMode === 'plaza' ? '从广场复制工具' : '从数字员工复制工具'}
+        targetLabel="复制到"
+        targetPlaceholder="选择目标员工"
+        targets={importTargetCandidates().map((item) => ({ value: item.id, label: item.name }))}
+        targetId={importTargetAgentId}
         sourcePlaceholder={importMode === 'plaza' ? '选择工具广场' : '选择复制来源'}
         sources={agents
-          .filter((item) => item.id !== agentId && (importMode === 'plaza' ? item.is_overall : !item.is_overall))
+          .filter((item) => item.id !== importTargetAgentId && (importMode === 'plaza' ? item.is_overall : !item.is_overall))
           .map((item) => ({ value: item.id, label: item.is_overall ? '工具广场' : item.name }))}
         sourceId={importSourceAgentId}
         itemsLabel="选择工具"
@@ -584,6 +613,7 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
             ? '从广场复制可用工具；复制后会成为当前员工的本地工具绑定。'
             : '从数字员工复制可用工具；不可见内容不会出现在列表。'
         }
+        onTargetChange={handleImportTargetChange}
         onSourceChange={(value) => {
           setImportSourceAgentId(value);
           void loadImportSourceTools(value);
