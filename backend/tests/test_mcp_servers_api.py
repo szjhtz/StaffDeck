@@ -9,9 +9,11 @@ from app.api.tools import (
     delete_mcp_server,
     discover_mcp_tools,
     discover_mcp_tools_adhoc,
+    list_tools,
     sync_mcp_tools,
 )
 from app.db.models import MCPServer, Tenant, Tool
+from app.db.models import AgentProfile, AgentResourceBinding
 from app.tools.tool_executor import ToolExecutor
 from app.tools.tool_schema import (
     MCPDiscoverRequest,
@@ -67,6 +69,7 @@ def test_discover_stdio_mcp_server_lists_tools() -> None:
 def test_sync_mcp_tools_imports_tools_and_executes() -> None:
     with _test_session() as db:
         db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.add(AgentProfile(id="agent_overall", tenant_id="tenant_demo", name="整体智能体", is_overall=True))
         db.commit()
 
         server = create_mcp_server(
@@ -95,6 +98,21 @@ def test_sync_mcp_tools_imports_tools_and_executes() -> None:
         assert imported.tool_type == "mcp"
         assert imported.config_json == {"tool": "echo"}
         assert imported.input_schema["properties"]["text"]["type"] == "string"
+        # display_name 应为工具名（leaf），不能是描述文本（否则列表里名字/描述会叠加）。
+        assert imported.display_name == "echo"
+        assert imported.description and imported.description != imported.display_name
+        # 同步的工具应建立 open gallery 绑定，才能在工具广场列表中可见。
+        binding = db.exec(
+            select(AgentResourceBinding).where(
+                AgentResourceBinding.tenant_id == "tenant_demo",
+                AgentResourceBinding.resource_type == "tool",
+                AgentResourceBinding.resource_id == imported.id,
+            )
+        ).first()
+        assert binding is not None
+        # 端到端：工具广场列表应能查到这个同步进来的工具。
+        listed = list_tools(tenant_id="tenant_demo", bucket=None, agent_id="agent_overall", db=db)
+        assert any(item.name == "builtin_demo.echo" for item in listed)
 
         result = ToolExecutor(db).execute(
             tenant_id="tenant_demo",
@@ -102,6 +120,42 @@ def test_sync_mcp_tools_imports_tools_and_executes() -> None:
         )
         assert result.success is True
         assert result.data == {"text": "hi", "length": 2}
+
+
+def test_sync_mcp_tools_scoped_to_employee_binds_privately() -> None:
+    with _test_session() as db:
+        db.add(Tenant(id="tenant_demo", name="Demo"))
+        db.add(AgentProfile(id="agent_overall", tenant_id="tenant_demo", name="整体智能体", is_overall=True))
+        db.add(AgentProfile(id="agent_employee", tenant_id="tenant_demo", name="数字员工", is_overall=False))
+        db.commit()
+
+        server = create_mcp_server(
+            MCPServerCreateRequest(
+                tenant_id="tenant_demo",
+                name="builtin_demo",
+                connection=MCPServerConnection(transport="builtin"),
+            ),
+            db,
+        )
+
+        sync = sync_mcp_tools(
+            server.id,
+            MCPSyncRequest(tenant_id="tenant_demo", tool_names=["echo"]),
+            db,
+            agent_id="agent_employee",
+        )
+        assert sync.success is True
+        assert sync.imported == ["echo"]
+
+        imported = db.exec(select(Tool).where(Tool.mcp_server_id == server.id)).first()
+        assert imported is not None
+
+        # 员工范围内同步应建立私有绑定，工具只对该员工可见，不出现在工具广场。
+        employee_tools = list_tools(tenant_id="tenant_demo", bucket=None, agent_id="agent_employee", db=db)
+        assert any(item.id == imported.id for item in employee_tools)
+
+        plaza_tools = list_tools(tenant_id="tenant_demo", bucket=None, agent_id="agent_overall", db=db)
+        assert all(item.id != imported.id for item in plaza_tools)
 
 
 def test_sync_is_idempotent_and_updates_schema() -> None:

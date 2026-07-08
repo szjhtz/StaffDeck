@@ -613,6 +613,7 @@ def sync_mcp_tools(
     server_id: str,
     request: MCPSyncRequest,
     db: Session = Depends(get_session),
+    agent_id: str | None = None,
 ) -> MCPSyncResponse:
     """把发现到的工具落成 Tool 行（新建/更新 schema），可选择导入的子集。"""
     row = _get_mcp_server(db, request.tenant_id, server_id)
@@ -629,6 +630,7 @@ def sync_mcp_tools(
     existing = _server_tools_by_leaf_name(db, server_id)
     imported: list[str] = []
     updated: list[str] = []
+    touched_tool_ids: list[str] = []
 
     for tool in discovery.tools:
         if selected and tool.name not in selected:
@@ -638,7 +640,7 @@ def sync_mcp_tools(
             new_row = Tool(
                 tenant_id=row.tenant_id,
                 name=_scoped_tool_name(row.name, tool.name),
-                display_name=tool.description[:60] or tool.name,
+                display_name=tool.name,
                 description=tool.description,
                 bucket=row.bucket or "MCP 工具",
                 tool_type="mcp",
@@ -654,6 +656,8 @@ def sync_mcp_tools(
                 enabled=True,
             )
             db.add(new_row)
+            db.flush()
+            touched_tool_ids.append(new_row.id)
             imported.append(tool.name)
         else:
             current.description = tool.description or current.description
@@ -662,7 +666,18 @@ def sync_mcp_tools(
             current.config_json = {"tool": tool.name}
             current.updated_at = utc_now()
             db.add(current)
+            touched_tool_ids.append(current.id)
             updated.append(tool.name)
+
+    # 与 create_tool 一致：按当前 agent 范围绑定——员工范围内只对该员工私有可见，
+    # 否则落到工具广场（open gallery），所有人可见。已存在的工具也一并补绑定，
+    # 避免「先在广场导入，再切到员工同步」时员工侧仍然看不到。
+    agent = get_agent(db, row.tenant_id, agent_id)
+    for tool_id in touched_tool_ids:
+        if agent and not agent.is_overall:
+            ensure_private_resource_binding(db, row.tenant_id, agent.id, "tool", tool_id, "active")
+        else:
+            ensure_open_gallery_binding(db, row.tenant_id, "tool", tool_id, "active")
 
     db.add(row)
     db.commit()

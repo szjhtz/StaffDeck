@@ -1,8 +1,9 @@
-import { ApiOutlined, ExperimentOutlined, SyncOutlined, ToolOutlined } from '../icons';
+import { ApiOutlined, ExperimentOutlined, ToolOutlined } from '../icons';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Copy, FlaskConical, Users } from 'lucide-react';
+import { pinyin } from 'pinyin-pro';
 
 import { api, TENANT_ID } from '../api/client';
 import type { EnterpriseAuthUser } from '../auth';
@@ -501,11 +502,13 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
       width: 240,
       render: (row) => (
         <div className="flex min-w-0 flex-col gap-[4px]">
-          <span className="inline-flex min-w-0 items-center gap-[6px]">
-            <span className="truncate font-medium leading-[18px] text-[#18181a]" title={row.display_name || row.name}>
+          <span className="flex w-full min-w-0 items-center gap-[6px]">
+            <span className="min-w-0 flex-1 truncate font-medium leading-[18px] text-[#18181a]" title={row.display_name || row.name}>
               {row.display_name || row.name}
             </span>
-            <StatusBadge tone="blue">工具集</StatusBadge>
+            <span className="shrink-0">
+              <StatusBadge tone="blue">工具集</StatusBadge>
+            </span>
           </span>
           <span className="truncate text-[#858b9c]" title={row.name}>
             {row.name}
@@ -554,7 +557,7 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
             onClick={() => navigate(`/enterprise/tools/mcp/${row.id}/edit`)}
             className={RETURN_BUTTON_CLASS}
           >
-            <SyncOutlined />
+            <IconRefresh className="size-[14px] shrink-0" />
             发现/同步
           </UIButton>
           {isOverallAgent && (
@@ -620,14 +623,8 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
           <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
             <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('blank')}>
               <IconAdd />
-              新建空白工具
+              新建工具
             </DropdownMenuItem>
-            {isOverallAgent && (
-              <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('mcp')}>
-                <ApiOutlined />
-                添加 MCP 服务器（工具集）
-              </DropdownMenuItem>
-            )}
             {!isOverallAgent && (
               <DropdownMenuItem className={MENU_ITEM_CLASS} onSelect={() => handleCreateAction('plaza')}>
                 <IconTool className="size-[14px]" />
@@ -677,7 +674,9 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
                       </strong>
                       <span className="mt-[2px] block truncate text-[12px] text-[#858b9c]">{row.name}</span>
                     </div>
-                    <StatusBadge tone="blue">工具集</StatusBadge>
+                    <span className="shrink-0">
+                      <StatusBadge tone="blue">工具集</StatusBadge>
+                    </span>
                   </div>
                   <div className="mt-[8px] flex flex-wrap items-center gap-[6px]">
                     <StatusBadge tone="gray">{transportLabel(row.connection.transport)}</StatusBadge>
@@ -694,7 +693,7 @@ export default function ToolsPage({ currentUser, onLogout }: ToolPageProps = {})
                       onClick={() => navigate(`/enterprise/tools/mcp/${row.id}/edit`)}
                       className={RETURN_BUTTON_CLASS}
                     >
-                      <SyncOutlined />
+                      <IconRefresh className="size-[14px] shrink-0" />
                       发现/同步
                     </UIButton>
                     {isOverallAgent && (
@@ -871,6 +870,50 @@ export function McpServerEditPage(props: ToolPageProps = {}) {
   return <McpServerEditorPage mode="edit" {...props} />;
 }
 
+/**
+ * 新建工具时顶部的类型切换条：HTTP 工具 / MCP 服务器。
+ * 点击即跳转到对应的新建页，体验上像同一个「新建工具」流程里的分支。
+ */
+function ToolTypeSwitcher({ active }: { active: 'http' | 'mcp' }) {
+  const navigate = useNavigate();
+  const options: { value: 'http' | 'mcp'; label: string; hint: string; to: string }[] = [
+    { value: 'http', label: 'HTTP 工具', hint: '配置单个 HTTP 接口作为工具', to: '/enterprise/tools/new' },
+    { value: 'mcp', label: 'MCP 服务器', hint: '连接 MCP Server，自动发现并同步其工具集', to: '/enterprise/tools/mcp/new' },
+  ];
+  return (
+    <div className="mb-[16px] flex flex-col gap-[8px]">
+      <span className={FIELD_LABEL_CLASS}>工具类型</span>
+      <div className="flex flex-wrap gap-[10px]">
+        {options.map((option) => {
+          const isActive = option.value === active;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => {
+                if (!isActive) navigate(option.to);
+              }}
+              className={cn(
+                'flex min-w-[200px] flex-1 flex-col gap-[4px] rounded-[12px] border px-[16px] py-[12px] text-left transition-colors',
+                isActive
+                  ? 'border-[#18181a] bg-[#f7f7f8]'
+                  : 'border-[#eceef1] bg-white hover:border-[#cbd3e6]',
+              )}
+              aria-pressed={isActive}
+            >
+              <span className="flex items-center gap-[6px] text-[13px] font-medium text-[#18181a]">
+                {option.value === 'mcp' ? <ApiOutlined className="size-[14px] shrink-0" /> : <IconTool className="size-[14px] shrink-0" />}
+                {option.label}
+              </span>
+              <span className="text-[12px] leading-[1.5] text-[#858b9c]">{option.hint}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ToolEditorPage({ mode, currentUser, onLogout }: { mode: 'new' | 'edit' } & ToolPageProps) {
   const [values, setValues] = useState<ToolFormValues>({ ...TOOL_FORM_INITIAL_VALUES });
   const [tool, setTool] = useState<ToolRead | null>(null);
@@ -912,11 +955,7 @@ function ToolEditorPage({ mode, currentUser, onLogout }: { mode: 'new' | 'edit' 
       return;
     }
     if (!String(values.url || '').trim()) {
-      notify.error(values.tool_type === 'mcp' ? '请填写 MCP URL 标记' : '请填写 URL');
-      return;
-    }
-    if (values.tool_type === 'mcp' && !String(values.mcp_config || '').trim()) {
-      notify.error('请填写 MCP Config JSON');
+      notify.error('请填写 URL');
       return;
     }
     const payload = buildToolPayload(values);
@@ -945,11 +984,11 @@ function ToolEditorPage({ mode, currentUser, onLogout }: { mode: 'new' | 'edit' 
       <AppHeader
         onLogout={onLogout}
         userName={currentUser?.username}
-        title={isEdit ? '编辑工具' : '新建空白工具'}
+        title={isEdit ? '编辑工具' : '新建工具'}
         description={
           isEdit
             ? '修改工具定义，并在右侧验证当前配置或已保存版本。'
-            : '填写工具定义后，可先用右侧探测区测试请求与返回结构。'
+            : '选择工具类型并填写定义，可先用右侧探测区测试请求与返回结构。'
         }
       />
       <div className="mt-[20px] mb-[16px] flex flex-wrap justify-end gap-[16px]">
@@ -971,6 +1010,7 @@ function ToolEditorPage({ mode, currentUser, onLogout }: { mode: 'new' | 'edit' 
           保存
         </UIButton>
       </div>
+      {!isEdit && <ToolTypeSwitcher active="http" />}
       <div className="grid grid-cols-1 items-start gap-[20px] xl:grid-cols-2">
         <SectionCard title="工具定义" loading={loading && isEdit && !tool}>
           <ToolFormFields values={values} setField={setField} bucketOptions={bucketOptions} />
@@ -1346,10 +1386,14 @@ function McpServerEditorPage({ mode, currentUser, onLogout }: { mode: 'new' | 'e
     }
     setSyncing(true);
     try {
-      const response = await api.post<MCPSyncResponse>(`/api/enterprise/mcp-servers/${server.id}/sync`, {
-        tenant_id: TENANT_ID,
-        tool_names: discovered.length ? selectedNames : null,
-      });
+      const agentQuery = currentAgentQuery();
+      const response = await api.post<MCPSyncResponse>(
+        `/api/enterprise/mcp-servers/${server.id}/sync${agentQuery ? `?${agentQuery.slice(1)}` : ''}`,
+        {
+          tenant_id: TENANT_ID,
+          tool_names: discovered.length ? selectedNames : null,
+        },
+      );
       if (!response.success) {
         notify.error(response.error?.message || '同步失败');
         return;
@@ -1391,9 +1435,10 @@ function McpServerEditorPage({ mode, currentUser, onLogout }: { mode: 'new' | 'e
     {
       key: 'name',
       title: '工具',
-      width: 180,
+      width: 220,
+      className: 'whitespace-normal',
       render: (row) => (
-        <span className="truncate font-medium text-[#18181a]" title={row.name}>
+        <span className="block wrap-break-word font-medium text-[#18181a]" title={row.name}>
           {row.name}
         </span>
       ),
@@ -1403,7 +1448,7 @@ function McpServerEditorPage({ mode, currentUser, onLogout }: { mode: 'new' | 'e
       title: '描述',
       className: 'whitespace-normal',
       render: (row) => (
-        <span className="line-clamp-2 wrap-break-word text-[#858b9c]">{row.description || '暂无描述'}</span>
+        <span className="block wrap-break-word text-[#858b9c]">{row.description || '暂无描述'}</span>
       ),
     },
     {
@@ -1421,7 +1466,7 @@ function McpServerEditorPage({ mode, currentUser, onLogout }: { mode: 'new' | 'e
       <AppHeader
         onLogout={onLogout}
         userName={currentUser?.username}
-        title={isEdit ? '编辑 MCP 服务器' : '添加 MCP 服务器'}
+        title={isEdit ? '编辑 MCP 服务器' : '新建工具'}
         description="配置 MCP Server 连接后，可发现其提供的工具并同步为工具集。"
       />
       <div className="mt-[20px] mb-[16px] flex flex-wrap justify-end gap-[16px]">
@@ -1433,17 +1478,22 @@ function McpServerEditorPage({ mode, currentUser, onLogout }: { mode: 'new' | 'e
           保存
         </UIButton>
       </div>
+      {!isEdit && <ToolTypeSwitcher active="mcp" />}
       <div className="grid grid-cols-1 items-start gap-[20px] xl:grid-cols-2">
         <SectionCard title="连接配置" loading={loading && isEdit && !server}>
           <div className="flex flex-col gap-[16px]">
             <div className="grid grid-cols-1 gap-[16px] sm:grid-cols-2">
-              <Field label="名称" htmlFor="mcp-name" hint={isEdit ? '保存后不可修改名称。' : undefined}>
+              <Field
+                label="名称"
+                htmlFor="mcp-name"
+                hint={isEdit ? '保存后不可修改名称。' : '作为唯一标识，仅支持字母/数字/下划线；中文将自动转拼音，最长 15 字符。'}
+              >
                 <Input
                   id="mcp-name"
                   placeholder="my_mcp_server"
                   disabled={isEdit}
                   value={values.name}
-                  onChange={(event) => setField('name', event.target.value)}
+                  onChange={(event) => setField('name', sanitizeMcpName(event.target.value))}
                 />
               </Field>
               <Field label="展示名称" htmlFor="mcp-display-name">
@@ -1571,7 +1621,7 @@ function McpServerEditorPage({ mode, currentUser, onLogout }: { mode: 'new' | 'e
           extra={(
             <div className="flex items-center gap-[8px]">
               <UIButton variant="outline" disabled={discovering} onClick={() => void discover()} className={RETURN_BUTTON_CLASS}>
-                <SyncOutlined />
+                <IconRefresh className="size-[14px] shrink-0" />
                 发现工具
               </UIButton>
               <UIButton disabled={!server || syncing} onClick={() => void sync()} className={PRIMARY_BUTTON_CLASS}>
@@ -1614,7 +1664,6 @@ function ToolFormFields({
   setField: <K extends keyof ToolFormValues>(name: K, value: ToolFormValues[K]) => void;
   bucketOptions: { value: string; label: string }[];
 }) {
-  const toolType = values.tool_type || 'http';
   return (
     <div className="flex flex-col gap-[16px]">
       <div className="grid grid-cols-1 gap-[16px] sm:grid-cols-2">
@@ -1641,17 +1690,6 @@ function ToolFormFields({
       </div>
 
       <div className="grid grid-cols-1 gap-[16px] sm:grid-cols-2">
-        <Field label="工具类型">
-          <UISelect value={toolType} onValueChange={(value) => setField('tool_type', value)}>
-            <SelectTrigger className={cn(SELECT_TRIGGER_CLASS, 'w-full')}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="http">HTTP 接口</SelectItem>
-              <SelectItem value="mcp">MCP 服务</SelectItem>
-            </SelectContent>
-          </UISelect>
-        </Field>
         <Field label="工具分桶" htmlFor="tool-bucket">
           <Input
             id="tool-bucket"
@@ -1679,7 +1717,7 @@ function ToolFormFields({
       </Field>
 
       <div className="grid grid-cols-1 gap-[16px] sm:grid-cols-[140px_minmax(0,1fr)]">
-        <Field label={toolType === 'mcp' ? 'Method 标记' : 'HTTP Method'}>
+        <Field label="HTTP Method">
           <UISelect value={values.method} onValueChange={(value) => setField('method', value)}>
             <SelectTrigger className={cn(SELECT_TRIGGER_CLASS, 'w-full')}>
               <SelectValue />
@@ -1691,49 +1729,36 @@ function ToolFormFields({
             </SelectContent>
           </UISelect>
         </Field>
-        <Field label={toolType === 'mcp' ? 'MCP URL 标记' : 'URL'} htmlFor="tool-url">
+        <Field label="URL" htmlFor="tool-url">
           <Input
             id="tool-url"
-            placeholder={toolType === 'mcp' ? 'mcp://builtin.demo/echo' : '/api/mock/order/query'}
+            placeholder="/api/mock/order/query"
             value={values.url || ''}
             onChange={(event) => setField('url', event.target.value)}
           />
         </Field>
       </div>
 
-      {toolType === 'mcp' ? (
-        <Field label="MCP Config JSON" htmlFor="tool-mcp-config">
+      <div className="grid grid-cols-1 gap-[16px] sm:grid-cols-2">
+        <Field label="Headers JSON" htmlFor="tool-headers">
           <Textarea
-            id="tool-mcp-config"
+            id="tool-headers"
             rows={4}
             className={MONO_INPUT_CLASS}
-            placeholder={'{\n  "server": "builtin.demo",\n  "tool": "echo"\n}'}
-            value={values.mcp_config}
-            onChange={(event) => setField('mcp_config', event.target.value)}
+            value={values.headers}
+            onChange={(event) => setField('headers', event.target.value)}
           />
         </Field>
-      ) : (
-        <div className="grid grid-cols-1 gap-[16px] sm:grid-cols-2">
-          <Field label="Headers JSON" htmlFor="tool-headers">
-            <Textarea
-              id="tool-headers"
-              rows={4}
-              className={MONO_INPUT_CLASS}
-              value={values.headers}
-              onChange={(event) => setField('headers', event.target.value)}
-            />
-          </Field>
-          <Field label="Auth JSON" htmlFor="tool-auth">
-            <Textarea
-              id="tool-auth"
-              rows={4}
-              className={MONO_INPUT_CLASS}
-              value={values.auth}
-              onChange={(event) => setField('auth', event.target.value)}
-            />
-          </Field>
-        </div>
-      )}
+        <Field label="Auth JSON" htmlFor="tool-auth">
+          <Textarea
+            id="tool-auth"
+            rows={4}
+            className={MONO_INPUT_CLASS}
+            value={values.auth}
+            onChange={(event) => setField('auth', event.target.value)}
+          />
+        </Field>
+      </div>
 
       <div className="grid grid-cols-1 gap-[16px] sm:grid-cols-2">
         <Field label="Input Schema" htmlFor="tool-input-schema">
@@ -1789,7 +1814,7 @@ function ToolProbeCard({ values }: { values: ToolFormValues }) {
       return;
     }
     if (!String(values.url || '').trim()) {
-      notify.error(values.tool_type === 'mcp' ? '请填写 MCP URL 标记' : '请填写 URL');
+      notify.error('请填写 URL');
       return;
     }
     const payload = buildToolPayload(values);
@@ -1923,10 +1948,12 @@ function SavedToolTestCard({ tool, standalone = false }: { tool: ToolRead; stand
       )}
     >
       <div className="flex items-start justify-between gap-[12px] rounded-[12px] border border-[#eceef1] bg-[#fafbfc] px-[14px] py-[12px]">
-        <span className="text-[13px] leading-[1.65] text-[#858b9c]">
+        <span className="min-w-0 flex-1 wrap-break-word text-[13px] leading-[1.65] text-[#858b9c]">
           调用已保存的「{tool.display_name || tool.name}」，用于验证员工实际可用的工具返回。
         </span>
-        <StatusBadge tone="gray">{toolTypeLabel(tool)}</StatusBadge>
+        <span className="shrink-0">
+          <StatusBadge tone="gray">{toolTypeLabel(tool)}</StatusBadge>
+        </span>
       </div>
       <div className="flex flex-col gap-[10px]">
         <span className={SUBSECTION_TITLE_CLASS}>测试参数</span>
@@ -2064,6 +2091,23 @@ function parseArgs(value: string): string[] {
 
 function transportLabel(transport: MCPTransport | string): string {
   return TRANSPORT_OPTIONS.find((item) => item.value === transport)?.label || String(transport);
+}
+
+/**
+ * 规范化 MCP 服务器名称（唯一标识）：
+ * 中文自动转拼音（无声调），只保留字母/数字/下划线，其余转下划线，最长 15 字符。
+ */
+function sanitizeMcpName(raw: string): string {
+  const input = String(raw || '');
+  // 含中文时先整体转拼音（不带声调），拼音之间用下划线连接。
+  const converted = /[\u4e00-\u9fa5]/.test(input)
+    ? pinyin(input, { toneType: 'none', type: 'array', nonZh: 'consecutive' }).join('_')
+    : input;
+  const normalized = converted
+    .replace(/[^a-zA-Z0-9_]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+/, '');
+  return normalized.slice(0, 15);
 }
 
 function serverEndpoint(connection: MCPServerConnection): string {
