@@ -980,19 +980,21 @@ function RankingDialog({
   const mode = modal?.mode || 'calls';
   const scope = modal?.scope || 'total';
   const columns: DataTableColumn<RankedSkill>[] = [
-    { key: 'rank', title: '排名', width: 70, render: (row) => row.rank },
+    { key: 'rank', title: '排名', width: 60, render: (row) => row.rank },
     {
       key: 'name',
       title: 'SOP 名称',
+      width: 180,
       className: 'text-[#18181a]',
       render: (row) => (
-        <span className="block truncate" title={row.name}>
+        <span className="block min-[180px]" title={row.name}>
           {row.name}
         </span>
       ),
     },
     {
       key: 'skill_id',
+      width: 80,
       title: 'SOP ID',
       render: (row) => (
         <span className="block truncate" title={row.skill_id}>
@@ -1007,11 +1009,11 @@ function RankingDialog({
       width: 120,
       render: (row) => <span className="block truncate">{row.business_domain || '-'}</span>,
     },
-    { key: 'metric', title: rankingMetricTitle(mode, scope), width: 110, render: (row) => rankingMetricValue(row, mode, scope) },
-    { key: 'calls', title: '调用次数', width: 100, render: (row) => `${rankingCalls(row, scope)} 次` },
-    { key: 'pos', title: '好评率', width: 90, render: (row) => percent(rankingPositiveRate(row, scope)) },
-    { key: 'neg', title: '差评率', width: 90, render: (row) => percent(rankingNegativeRate(row, scope)) },
-    { key: 'fb', title: '反馈数', width: 90, render: (row) => rankingFeedbackText(row, scope) },
+    { key: 'metric', title: rankingMetricTitle(mode, scope), width: 120, render: (row) => rankingMetricValue(row, mode, scope) },
+    { key: 'calls', title: '调用次数', render: (row) => `${rankingCalls(row, scope)} 次` },
+    { key: 'pos', title: '好评率', render: (row) => percent(rankingPositiveRate(row, scope)) },
+    { key: 'neg', title: '差评率', render: (row) => percent(rankingNegativeRate(row, scope)) },
+    { key: 'fb', title: '反馈数', render: (row) => rankingFeedbackText(row, scope) },
   ];
   return (
     <Dialog open={Boolean(modal)} onOpenChange={(next) => !next && onClose()}>
@@ -1172,7 +1174,7 @@ function VersionDetailDialog({
         {detail && (
           <div className="flex min-h-0 flex-1 flex-col gap-[16px] overflow-y-auto px-[12px]">
             <div className="grid grid-cols-2 gap-[10px] max-[520px]:grid-cols-1">
-              <DetailField label="SOP ID">{detail.skill_id}</DetailField>
+              {/* <DetailField label="SOP ID">{detail.skill_id}</DetailField> */}
               <DetailField label="版本">{detail.version}</DetailField>
               <DetailField label="业务域">{detail.business_domain || '-'}</DetailField>
               <DetailField label="状态">{statusText(detail.status)}</DetailField>
