@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 
@@ -82,6 +83,13 @@ export function ResourceImportDialog({
   onSubmit,
 }: ResourceImportDialogProps) {
   const showTargetSelect = Boolean(targets && onTargetChange);
+  const effectiveSourceId = sourceId || (sources.length === 1 ? sources[0].value : '');
+
+  useEffect(() => {
+    if (!open || sourceId || sources.length !== 1) return;
+    onSourceChange(sources[0].value);
+  }, [onSourceChange, open, sourceId, sources]);
+
   const toggle = (id: string, checked: boolean) => {
     onSelectedChange(checked ? [...selectedIds, id] : selectedIds.filter((value) => value !== id));
   };
@@ -121,7 +129,7 @@ export function ResourceImportDialog({
             <span className="text-[11px] font-semibold text-[#858b9c]">复制来源</span>
             <div className="relative">
               <select
-                value={sourceId}
+                value={effectiveSourceId}
                 onChange={(event) => onSourceChange(event.target.value)}
                 className={cn(
                   SELECT_TRIGGER_CLASS,

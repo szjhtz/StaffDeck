@@ -102,6 +102,11 @@ def import_general_skill(
     homepage = _optional_text(request.homepage) or _metadata_text(metadata, "homepage", "url", "source")
     _validate_slug(slug)
     lookup_slug = _optional_text(request.original_slug)
+    agent_id = _agent_id_or_none(request.agent_id)
+    agent = ensure_agent_scope_manager(db, request.tenant_id, agent_id, current_user)
+    is_private_agent_scope = bool(agent and not agent.is_overall)
+    if not is_private_agent_scope:
+        ensure_open_gallery_admin(request.tenant_id, current_user)
     row = None
     if lookup_slug:
         row = db.exec(
@@ -112,6 +117,12 @@ def import_general_skill(
         ).first()
         if not row:
             raise HTTPException(status_code=404, detail="General skill to update was not found")
+        if is_private_agent_scope:
+            if is_open_gallery_resource(db, request.tenant_id, "general_skill", row):
+                row = None
+                slug = _unique_slug(db, request.tenant_id, slug)
+            elif not _general_skill_editable_by_agent(db, request.tenant_id, agent.id, row):
+                raise HTTPException(status_code=404, detail="General skill not visible to this agent")
     else:
         conflict = db.exec(
             select(GeneralSkill).where(
@@ -120,12 +131,16 @@ def import_general_skill(
             )
         ).first()
         if conflict:
-            raise HTTPException(status_code=409, detail="General skill slug already exists")
+            if is_private_agent_scope and is_open_gallery_resource(
+                db,
+                request.tenant_id,
+                "general_skill",
+                conflict,
+            ):
+                slug = _unique_slug(db, request.tenant_id, slug)
+            else:
+                raise HTTPException(status_code=409, detail="General skill slug already exists")
     now = utc_now()
-    agent_id = _agent_id_or_none(request.agent_id)
-    agent = ensure_agent_scope_manager(db, request.tenant_id, agent_id, current_user)
-    if not (agent and not agent.is_overall):
-        ensure_open_gallery_admin(request.tenant_id, current_user)
     if row:
         if slug != row.slug:
             conflict = db.exec(
@@ -135,7 +150,15 @@ def import_general_skill(
                 )
             ).first()
             if conflict:
-                raise HTTPException(status_code=409, detail="General skill slug already exists")
+                if is_private_agent_scope and is_open_gallery_resource(
+                    db,
+                    request.tenant_id,
+                    "general_skill",
+                    conflict,
+                ):
+                    slug = _unique_slug(db, request.tenant_id, slug)
+                else:
+                    raise HTTPException(status_code=409, detail="General skill slug already exists")
         row.slug = slug
         row.name = name
         row.description = description
@@ -161,13 +184,13 @@ def import_general_skill(
             created_at=now,
             updated_at=now,
         )
-    if agent and not agent.is_overall:
+    if is_private_agent_scope:
         mark_resource_private_for_agent(row, agent.id)
     else:
         mark_resource_open_gallery(row)
     db.add(row)
     db.flush()
-    if agent and not agent.is_overall:
+    if is_private_agent_scope:
         ensure_private_resource_binding(
             db,
             request.tenant_id,
@@ -606,6 +629,26 @@ def _ensure_general_skill_binding(
     db.add(row)
     db.flush()
     return row
+
+
+def _general_skill_editable_by_agent(db: Session, tenant_id: str, agent_id: str, row: GeneralSkill) -> bool:
+    metadata = row.metadata_json or {}
+    if metadata.get("owner_agent_id") == agent_id and metadata.get("scope") == "agent_private":
+        return True
+    binding = db.exec(
+        select(AgentResourceBinding).where(
+            AgentResourceBinding.tenant_id == tenant_id,
+            AgentResourceBinding.agent_id == agent_id,
+            AgentResourceBinding.resource_type == "general_skill",
+            AgentResourceBinding.resource_id == row.id,
+            AgentResourceBinding.status != "deleted",
+        )
+    ).first()
+    return bool(
+        binding
+        and not is_open_gallery_resource(db, tenant_id, "general_skill", row)
+        and is_bound_resource_visible_for_agent(db, tenant_id, "general_skill", row, binding)
+    )
 
 
 def _get_default_model(db: Session, tenant_id: str) -> ModelConfig:

@@ -19,7 +19,7 @@ from app.agents.branching import (
 )
 from app.config import get_settings
 from app.db import get_session
-from app.db.models import AgentResourceBinding, MCPServer, Tool, User, utc_now
+from app.db.models import AgentProfile, AgentResourceBinding, MCPServer, Tool, User, utc_now
 from app.security.auth import get_current_user
 from app.security.permissions import ensure_agent_scope_manager, ensure_open_gallery_admin
 from app.security.tenant import ensure_tenant
@@ -248,9 +248,19 @@ def update_tool(
     row = _get_tool(db, request.tenant_id, tool_id)
     agent = ensure_agent_scope_manager(db, request.tenant_id, agent_id, current_user)
     _ensure_tool_visible(db, request.tenant_id, row, agent_id)
-    if not (agent and not agent.is_overall):
+    if agent and not agent.is_overall:
+        source_tool_id = row.id
+        row = _ensure_private_tool_for_agent(db, request.tenant_id, agent, row)
+        requested_name = request.name.strip()
+        if _tool_name_taken(db, request.tenant_id, requested_name, exclude_id=row.id):
+            requested_name = _unique_tool_name(db, request.tenant_id, requested_name, agent.id, exclude_id=row.id)
+    else:
         ensure_open_gallery_admin(request.tenant_id, current_user)
-    row.name = request.name
+        source_tool_id = row.id
+        requested_name = request.name.strip()
+        if _tool_name_taken(db, request.tenant_id, requested_name, exclude_id=row.id):
+            raise HTTPException(status_code=409, detail="Tool name already exists for this tenant")
+    row.name = requested_name
     row.display_name = request.display_name
     row.description = request.description
     row.bucket = _normalize_bucket(request.bucket)
@@ -268,6 +278,12 @@ def update_tool(
     db.add(row)
     db.flush()
     if agent and not agent.is_overall:
+        if source_tool_id != row.id:
+            source_binding = _tool_binding(db, request.tenant_id, agent.id, source_tool_id)
+            if source_binding:
+                source_binding.status = "deleted"
+                source_binding.updated_at = utc_now()
+                db.add(source_binding)
         ensure_private_resource_binding(
             db,
             request.tenant_id,
@@ -399,6 +415,59 @@ def _tool_binding(db: Session, tenant_id: str, agent_id: str, tool_id: str) -> A
             AgentResourceBinding.status != "deleted",
         )
     ).first()
+
+
+def _ensure_private_tool_for_agent(db: Session, tenant_id: str, agent: AgentProfile, row: Tool) -> Tool:
+    if not is_open_gallery_resource(db, tenant_id, "tool", row):
+        return row
+    now = utc_now()
+    clone = Tool(
+        tenant_id=tenant_id,
+        name=_unique_tool_name(db, tenant_id, row.name, agent.id),
+        display_name=row.display_name,
+        description=row.description,
+        bucket=row.bucket,
+        tool_type=row.tool_type,
+        method=row.method,
+        url=row.url,
+        headers_json=dict(row.headers_json or {}),
+        auth_json=dict(row.auth_json or {}),
+        config_json=dict(row.config_json or {}),
+        input_schema=dict(row.input_schema or {}),
+        output_schema=dict(row.output_schema or {}),
+        allowed_skills_json=list(row.allowed_skills_json or []),
+        mcp_server_id=row.mcp_server_id,
+        enabled=row.enabled,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(clone)
+    db.flush()
+    return clone
+
+
+def _tool_name_taken(db: Session, tenant_id: str, name: str, exclude_id: str | None = None) -> bool:
+    stmt = select(Tool).where(Tool.tenant_id == tenant_id, Tool.name == name)
+    if exclude_id:
+        stmt = stmt.where(Tool.id != exclude_id)
+    return db.exec(stmt).first() is not None
+
+
+def _unique_tool_name(
+    db: Session,
+    tenant_id: str,
+    base_name: str,
+    agent_id: str,
+    exclude_id: str | None = None,
+) -> str:
+    base = (base_name or "tool").strip() or "tool"
+    suffix_base = f"{base}-{agent_id[:8]}"
+    candidate = suffix_base
+    suffix = 2
+    while _tool_name_taken(db, tenant_id, candidate, exclude_id=exclude_id):
+        candidate = f"{suffix_base}-{suffix}"
+        suffix += 1
+    return candidate
 
 
 def _normalize_bucket(value: str | None) -> str:

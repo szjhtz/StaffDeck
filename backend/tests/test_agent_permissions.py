@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from app.agents.branching import ensure_open_gallery_binding, ensure_private_resource_binding
 from app.agents.schema import (
     AgentProfileCreateRequest,
     AgentProfileUpdateRequest,
@@ -12,10 +13,12 @@ from app.agents.schema import (
     AgentResourcesUpdateRequest,
 )
 from app.api.agents import create_agent, delete_agent, list_agents, update_agent, update_agent_resources
-from app.api.tools import create_tool
-from app.db.models import AgentProfile, AgentResourceBinding, Tenant, Tool, User
+from app.api.general_skills import import_general_skill
+from app.api.tools import create_tool, update_tool
+from app.db.models import AgentProfile, AgentResourceBinding, GeneralSkill, Tenant, Tool, User
+from app.general_skills.schema import GeneralSkillImportRequest
 from app.security.permissions import ensure_agent_scope_manager
-from app.tools.tool_schema import ToolCreateRequest
+from app.tools.tool_schema import ToolCreateRequest, ToolUpdateRequest
 
 
 def test_only_creator_or_admin_can_update_and_delete_agent() -> None:
@@ -224,6 +227,131 @@ def test_create_agent_records_creator_and_blocks_non_admin_overall() -> None:
             current_user=admin,
         )
         assert overall.is_overall is True
+
+
+def test_private_tool_edit_does_not_mutate_open_gallery_tool() -> None:
+    with _test_session() as db:
+        owner, _other, _admin = _seed_users(db)
+        db.add(AgentProfile(id="agent_overall", tenant_id="tenant_demo", name="开放广场", is_overall=True))
+        agent = AgentProfile(
+            id="agent_owned",
+            tenant_id="tenant_demo",
+            name="研发员工",
+            is_overall=False,
+            metadata_json={"owner_user_id": owner.id, "owner_username": owner.username},
+        )
+        open_tool = Tool(
+            id="tool_open_weather",
+            tenant_id="tenant_demo",
+            name="weather",
+            display_name="天气",
+            method="POST",
+            url="/api/weather",
+        )
+        db.add(agent)
+        db.add(open_tool)
+        db.flush()
+        ensure_open_gallery_binding(db, "tenant_demo", "tool", open_tool.id, "active")
+        ensure_private_resource_binding(db, "tenant_demo", agent.id, "tool", open_tool.id, "active")
+        db.commit()
+
+        updated = update_tool(
+            open_tool.id,
+            ToolUpdateRequest(
+                tenant_id="tenant_demo",
+                name="weather",
+                display_name="员工天气",
+                description="员工私有配置",
+                url="/api/private-weather",
+            ),
+            agent_id=agent.id,
+            db=db,
+            current_user=owner,
+        )
+
+        db.refresh(open_tool)
+        assert updated.id != open_tool.id
+        assert open_tool.display_name == "天气"
+        assert open_tool.url == "/api/weather"
+        assert updated.display_name == "员工天气"
+        assert updated.name.startswith("weather-agent_ow")
+        visible_binding = db.exec(
+            select(AgentResourceBinding).where(
+                AgentResourceBinding.tenant_id == "tenant_demo",
+                AgentResourceBinding.agent_id == agent.id,
+                AgentResourceBinding.resource_type == "tool",
+                AgentResourceBinding.resource_id == updated.id,
+                AgentResourceBinding.status == "active",
+            )
+        ).first()
+        old_binding = db.exec(
+            select(AgentResourceBinding).where(
+                AgentResourceBinding.tenant_id == "tenant_demo",
+                AgentResourceBinding.agent_id == agent.id,
+                AgentResourceBinding.resource_type == "tool",
+                AgentResourceBinding.resource_id == open_tool.id,
+            )
+        ).first()
+        assert visible_binding is not None
+        assert old_binding and old_binding.status == "deleted"
+
+
+def test_private_general_skill_edit_does_not_mutate_open_gallery_skill() -> None:
+    with _test_session() as db:
+        owner, _other, _admin = _seed_users(db)
+        db.add(AgentProfile(id="agent_overall", tenant_id="tenant_demo", name="开放广场", is_overall=True))
+        agent = AgentProfile(
+            id="agent_owned",
+            tenant_id="tenant_demo",
+            name="研发员工",
+            is_overall=False,
+            metadata_json={"owner_user_id": owner.id, "owner_username": owner.username},
+        )
+        open_skill = GeneralSkill(
+            id="genskill_open_weather",
+            tenant_id="tenant_demo",
+            slug="weather",
+            name="天气技能",
+            description="开放广场版本",
+            skill_markdown="# 天气技能\n",
+            status="published",
+        )
+        db.add(agent)
+        db.add(open_skill)
+        db.flush()
+        ensure_open_gallery_binding(db, "tenant_demo", "general_skill", open_skill.id, "active")
+        ensure_private_resource_binding(db, "tenant_demo", agent.id, "general_skill", open_skill.id, "active")
+        db.commit()
+
+        updated = import_general_skill(
+            GeneralSkillImportRequest(
+                tenant_id="tenant_demo",
+                agent_id=agent.id,
+                original_slug="weather",
+                slug="weather",
+                name="员工天气技能",
+                description="员工私有版本",
+                markdown="# 员工天气技能\n",
+            ),
+            db=db,
+            current_user=owner,
+        )
+
+        db.refresh(open_skill)
+        assert updated.id != open_skill.id
+        assert updated.slug.startswith("weather-")
+        assert updated.name == "员工天气技能"
+        assert open_skill.name == "天气技能"
+        assert open_skill.description == "开放广场版本"
+        assert db.exec(
+            select(AgentResourceBinding).where(
+                AgentResourceBinding.tenant_id == "tenant_demo",
+                AgentResourceBinding.agent_id == agent.id,
+                AgentResourceBinding.resource_type == "general_skill",
+                AgentResourceBinding.resource_id == updated.id,
+                AgentResourceBinding.status == "active",
+            )
+        ).first() is not None
 
 
 def _seed_users(db: Session) -> tuple[User, User, User]:
