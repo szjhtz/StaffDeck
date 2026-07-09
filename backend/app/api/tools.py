@@ -16,6 +16,7 @@ from app.agents.branching import (
     require_overall_agent,
     resource_binding_metadata,
     system_creator_metadata,
+    user_creator_metadata,
 )
 from app.config import get_settings
 from app.db import get_session
@@ -144,6 +145,7 @@ def create_tool(
     )
     db.add(row)
     db.flush()
+    creator_metadata = user_creator_metadata(current_user)
     if agent and not agent.is_overall:
         ensure_private_resource_binding(
             db,
@@ -152,10 +154,18 @@ def create_tool(
             "tool",
             row.id,
             "active" if request.enabled else "inactive",
+            metadata_json=creator_metadata,
         )
     else:
         ensure_open_gallery_admin(request.tenant_id, current_user)
-        ensure_open_gallery_binding(db, request.tenant_id, "tool", row.id, "active" if request.enabled else "inactive")
+        ensure_open_gallery_binding(
+            db,
+            request.tenant_id,
+            "tool",
+            row.id,
+            "active" if request.enabled else "inactive",
+            metadata_json=creator_metadata,
+        )
     db.commit()
     db.refresh(row)
     metadata_by_id = resource_binding_metadata(db, request.tenant_id, agent_id, "tool")
@@ -280,6 +290,7 @@ def update_tool(
     row.updated_at = utc_now()
     db.add(row)
     db.flush()
+    creator_metadata = user_creator_metadata(current_user)
     if agent and not agent.is_overall:
         if source_tool_id != row.id:
             source_binding = _tool_binding(db, request.tenant_id, agent.id, source_tool_id)
@@ -294,9 +305,17 @@ def update_tool(
             "tool",
             row.id,
             "active" if request.enabled else "inactive",
+            metadata_json=creator_metadata if source_tool_id != row.id else None,
         )
     else:
-        ensure_open_gallery_binding(db, request.tenant_id, "tool", row.id, "active" if request.enabled else "inactive")
+        ensure_open_gallery_binding(
+            db,
+            request.tenant_id,
+            "tool",
+            row.id,
+            "active" if request.enabled else "inactive",
+            metadata_json=creator_metadata,
+        )
     db.commit()
     db.refresh(row)
     metadata_by_id = resource_binding_metadata(db, request.tenant_id, agent_id, "tool")
@@ -779,11 +798,27 @@ def sync_mcp_tools(
     # 否则落到工具广场（open gallery），所有人可见。已存在的工具也一并补绑定，
     # 避免「先在广场导入，再切到员工同步」时员工侧仍然看不到。
     agent = get_agent(db, row.tenant_id, agent_id)
+    creator_metadata = user_creator_metadata(current_user)
     for tool_id in touched_tool_ids:
         if agent and not agent.is_overall:
-            ensure_private_resource_binding(db, row.tenant_id, agent.id, "tool", tool_id, "active")
+            ensure_private_resource_binding(
+                db,
+                row.tenant_id,
+                agent.id,
+                "tool",
+                tool_id,
+                "active",
+                metadata_json=creator_metadata,
+            )
         else:
-            ensure_open_gallery_binding(db, row.tenant_id, "tool", tool_id, "active")
+            ensure_open_gallery_binding(
+                db,
+                row.tenant_id,
+                "tool",
+                tool_id,
+                "active",
+                metadata_json=creator_metadata,
+            )
 
     db.add(row)
     db.commit()

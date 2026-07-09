@@ -113,6 +113,29 @@ def system_creator_metadata(extra: dict[str, Any] | None = None) -> dict[str, An
     return metadata
 
 
+def user_creator_metadata(user: object | None, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    metadata = dict(extra or {})
+    if user is None:
+        return system_creator_metadata(metadata)
+    user_id = getattr(user, "id", None)
+    username = getattr(user, "username", None)
+    display_name = getattr(user, "display_name", None) or username
+    if _valid_creator_value(user_id):
+        metadata["owner_user_id"] = str(user_id).strip()
+        metadata["created_by_user_id"] = str(user_id).strip()
+    if _valid_creator_value(username):
+        normalized_username = str(username).strip()
+        metadata["owner_username"] = normalized_username
+        metadata["created_by_username"] = normalized_username
+        metadata["created_by"] = normalized_username
+        metadata["creator_name"] = normalized_username
+    if _valid_creator_value(display_name):
+        normalized_display_name = str(display_name).strip()
+        metadata["owner_display_name"] = normalized_display_name
+        metadata["created_by_display_name"] = normalized_display_name
+    return system_creator_metadata(metadata)
+
+
 def get_overall_agent(db: Session, tenant_id: str) -> AgentProfile | None:
     return db.exec(
         select(AgentProfile).where(
@@ -196,17 +219,21 @@ def agent_private_metadata(agent_id: str, extra: dict[str, Any] | None = None) -
     return metadata
 
 
-def mark_resource_open_gallery(resource: object) -> None:
+def mark_resource_open_gallery(resource: object, metadata_json: dict[str, Any] | None = None) -> None:
     if not hasattr(resource, "metadata_json"):
         return
-    metadata = open_gallery_metadata(getattr(resource, "metadata_json", None) or {})
+    metadata = open_gallery_metadata({**(getattr(resource, "metadata_json", None) or {}), **(metadata_json or {})})
     setattr(resource, "metadata_json", metadata)
 
 
-def mark_resource_private_for_agent(resource: object, agent_id: str) -> None:
+def mark_resource_private_for_agent(
+    resource: object,
+    agent_id: str,
+    metadata_json: dict[str, Any] | None = None,
+) -> None:
     if not hasattr(resource, "metadata_json"):
         return
-    metadata = agent_private_metadata(agent_id, getattr(resource, "metadata_json", None) or {})
+    metadata = agent_private_metadata(agent_id, {**(getattr(resource, "metadata_json", None) or {}), **(metadata_json or {})})
     setattr(resource, "metadata_json", metadata)
 
 
@@ -216,6 +243,7 @@ def ensure_open_gallery_binding(
     resource_type: str,
     resource_id: str,
     status: str = "active",
+    metadata_json: dict[str, Any] | None = None,
 ) -> None:
     overall = get_overall_agent(db, tenant_id)
     if overall:
@@ -226,7 +254,7 @@ def ensure_open_gallery_binding(
             resource_type,
             resource_id,
             status,
-            metadata_json=open_gallery_metadata(),
+            metadata_json=open_gallery_metadata(metadata_json),
         )
 
 
@@ -258,6 +286,7 @@ def ensure_private_resource_binding(
     resource_type: str,
     resource_id: str,
     status: str = "active",
+    metadata_json: dict[str, Any] | None = None,
 ) -> None:
     _ensure_binding(
         db,
@@ -266,7 +295,7 @@ def ensure_private_resource_binding(
         resource_type,
         resource_id,
         status,
-        metadata_json=_agent_private_metadata_for(db, tenant_id, agent_id),
+        metadata_json=_agent_private_metadata_for(db, tenant_id, agent_id, metadata_json),
     )
 
 
@@ -453,6 +482,7 @@ def ensure_agent_skill_branch(
     tenant_id: str,
     agent_id: str,
     skill: Skill,
+    metadata_json: dict[str, Any] | None = None,
 ) -> AgentSkillBranch:
     branch = db.exec(
         select(AgentSkillBranch).where(
@@ -461,7 +491,10 @@ def ensure_agent_skill_branch(
             AgentSkillBranch.skill_id == skill.skill_id,
         )
     ).first()
-    metadata = _agent_private_metadata_for(db, tenant_id, agent_id, getattr(branch, "metadata_json", None) or {})
+    branch_metadata = dict(getattr(branch, "metadata_json", None) or {})
+    if metadata_json:
+        branch_metadata.update(metadata_json)
+    metadata = _agent_private_metadata_for(db, tenant_id, agent_id, branch_metadata)
     if branch:
         if branch.metadata_json != metadata:
             branch.metadata_json = metadata
@@ -690,11 +723,30 @@ def ensure_knowledge_base_version(db: Session, kb: KnowledgeBase, version: str |
     return row
 
 
+def _apply_knowledge_version_metadata(
+    db: Session,
+    tenant_id: str,
+    agent: AgentProfile | None,
+    version: KnowledgeBaseVersion,
+    metadata_json: dict[str, Any] | None,
+) -> None:
+    if not metadata_json:
+        return
+    merged = {**(version.metadata_json or {}), **metadata_json}
+    if agent and not agent.is_overall:
+        version.metadata_json = _agent_private_metadata_for(db, tenant_id, agent.id, merged)
+    else:
+        version.metadata_json = open_gallery_metadata(merged)
+    version.updated_at = utc_now()
+    db.add(version)
+
+
 def knowledge_version_for_upload(
     db: Session,
     tenant_id: str,
     knowledge_base_id: str,
     agent_id: str | None,
+    metadata_json: dict[str, Any] | None = None,
 ) -> KnowledgeBaseVersion:
     kb = db.get(KnowledgeBase, knowledge_base_id)
     if not kb or kb.tenant_id != tenant_id or kb.status == "archived":
@@ -703,12 +755,15 @@ def knowledge_version_for_upload(
         raise HTTPException(status_code=404, detail="Knowledge base not found")
     agent = get_agent(db, tenant_id, agent_id)
     if not agent or agent.is_overall:
-        return ensure_knowledge_base_version(db, kb, _current_knowledge_version(kb))
+        version = ensure_knowledge_base_version(db, kb, _current_knowledge_version(kb))
+        _apply_knowledge_version_metadata(db, tenant_id, agent, version, metadata_json)
+        return version
     branch = _ensure_knowledge_branch(db, tenant_id, agent.id, kb)
     source_version = ensure_knowledge_base_version(db, kb, branch.head_version)
     next_version = _next_knowledge_branch_version(branch)
     target_version = ensure_knowledge_base_version(db, kb, next_version)
     clone_knowledge_version_assets(db, tenant_id, knowledge_base_id, source_version.id, target_version.id)
+    _apply_knowledge_version_metadata(db, tenant_id, agent, target_version, metadata_json)
     branch.head_version = next_version
     branch.sync_state = "diverged"
     branch.status = "active"
@@ -721,11 +776,21 @@ def ensure_agent_private_knowledge_branch(
     tenant_id: str,
     agent_id: str,
     knowledge_base: KnowledgeBase,
+    metadata_json: dict[str, Any] | None = None,
 ) -> AgentKnowledgeBranch:
-    mark_resource_private_for_agent(knowledge_base, agent_id)
-    ensure_private_resource_binding(db, tenant_id, agent_id, "knowledge_base", knowledge_base.id, "active")
+    mark_resource_private_for_agent(knowledge_base, agent_id, metadata_json)
+    ensure_private_resource_binding(
+        db,
+        tenant_id,
+        agent_id,
+        "knowledge_base",
+        knowledge_base.id,
+        "active",
+        metadata_json=metadata_json,
+    )
     current_version = _current_knowledge_version(knowledge_base)
-    ensure_knowledge_base_version(db, knowledge_base, current_version)
+    version = ensure_knowledge_base_version(db, knowledge_base, current_version)
+    _apply_knowledge_version_metadata(db, tenant_id, get_agent(db, tenant_id, agent_id), version, metadata_json)
     branch = _ensure_knowledge_branch(db, tenant_id, agent_id, knowledge_base)
     branch.base_version = current_version
     branch.head_version = current_version

@@ -22,7 +22,7 @@ from app.api.skills import (
     update_skill,
 )
 from app.agents.branching import ensure_open_gallery_binding, visible_published_skills
-from app.db.models import AgentEvent, AgentProfile, Message, Skill, SkillFeedback, SkillVersion, Tenant
+from app.db.models import AgentEvent, AgentProfile, Message, Skill, SkillFeedback, SkillVersion, Tenant, User
 from app.db.models import ModelConfig
 from app.skills.skill_distiller import SkillDistiller
 from app.skills.skill_editor import SkillEditor
@@ -541,9 +541,17 @@ def test_personal_created_skill_uses_agent_owner_as_creator() -> None:
         assert listed[0].metadata["created_by_username"] == "owner"
 
 
-def test_personal_created_skill_falls_back_to_agent_name_when_owner_missing() -> None:
+def test_personal_created_skill_uses_current_admin_when_owner_missing() -> None:
     with _test_session() as db:
         db.add(Tenant(id="tenant_demo", name="Demo"))
+        current_user = User(
+            id="user_admin",
+            tenant_id="tenant_demo",
+            username="admin",
+            display_name="Admin",
+            password_hash="test",
+        )
+        db.add(current_user)
         agent = AgentProfile(
             id="agent_legacy",
             tenant_id="tenant_demo",
@@ -558,11 +566,14 @@ def test_personal_created_skill_falls_back_to_agent_name_when_owner_missing() ->
             SkillCreateRequest(tenant_id="tenant_demo", content=_skill_card(), status="published"),
             agent_id=agent.id,
             db=db,
+            current_user=current_user,
         )
         listed = list_skills("tenant_demo", db, agent_id=agent.id)
 
-        assert created.metadata["creator_name"] == "旧员工"
-        assert listed[0].metadata["creator_name"] == "旧员工"
+        assert created.metadata["creator_name"] == "admin"
+        assert created.metadata["created_by_username"] == "admin"
+        assert listed[0].metadata["creator_name"] == "admin"
+        assert listed[0].metadata["created_by_username"] == "admin"
 
 
 def test_legacy_unversioned_stats_are_archived_to_oldest_version() -> None:

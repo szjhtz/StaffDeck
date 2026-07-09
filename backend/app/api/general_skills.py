@@ -31,6 +31,7 @@ from app.agents.branching import (
     mark_resource_private_for_agent,
     require_overall_agent,
     system_creator_metadata,
+    user_creator_metadata,
 )
 from app.db import get_session
 from app.db.models import AgentResourceBinding, GeneralSkill, ModelConfig, User, utc_now
@@ -95,7 +96,7 @@ def import_general_skill(
     ensure_tenant(db, request.tenant_id)
     files = _normalize_skill_files(request.files, request.markdown)
     markdown = _skill_markdown_from_files(files)
-    metadata = _parse_skill_metadata(markdown)
+    metadata = user_creator_metadata(current_user, _parse_skill_metadata(markdown))
     name = _optional_text(request.name) or _metadata_text(metadata, "name", "title") or "未命名通用技能"
     slug = _optional_text(request.slug) or _metadata_text(metadata, "slug", "id") or _slugify(name)
     description = _optional_text(request.description) or _metadata_text(metadata, "description", "summary")
@@ -187,9 +188,9 @@ def import_general_skill(
             updated_at=now,
         )
     if is_private_agent_scope:
-        mark_resource_private_for_agent(row, agent.id)
+        mark_resource_private_for_agent(row, agent.id, metadata)
     else:
-        mark_resource_open_gallery(row)
+        mark_resource_open_gallery(row, metadata)
     db.add(row)
     db.flush()
     if is_private_agent_scope:
@@ -200,6 +201,7 @@ def import_general_skill(
             "general_skill",
             row.id,
             "active" if request.status == "published" else "inactive",
+            metadata_json=metadata,
         )
     else:
         ensure_open_gallery_binding(
@@ -208,6 +210,7 @@ def import_general_skill(
             "general_skill",
             row.id,
             "active" if request.status == "published" else "inactive",
+            metadata_json=metadata,
         )
     db.commit()
     db.refresh(row)
@@ -320,7 +323,7 @@ def _create_imported_general_skill(
         homepage=resolved_homepage,
         skill_markdown=markdown,
         skill_files_json=[file.model_dump(mode="json") for file in files],
-        metadata_json={**metadata, "import_source": import_source},
+        metadata_json=user_creator_metadata(current_user, {**metadata, "import_source": import_source}),
         status=status,
         permissions_json={"network": True, "python": True},
         runtime_config_json={"runtime": "python", "timeout_seconds": 12},
@@ -330,9 +333,9 @@ def _create_imported_general_skill(
     if not (agent and not agent.is_overall):
         ensure_open_gallery_admin(tenant_id, current_user)
     if agent and not agent.is_overall:
-        mark_resource_private_for_agent(row, agent.id)
+        mark_resource_private_for_agent(row, agent.id, row.metadata_json or {})
     else:
-        mark_resource_open_gallery(row)
+        mark_resource_open_gallery(row, row.metadata_json or {})
     db.add(row)
     db.flush()
     if agent and not agent.is_overall:
@@ -343,6 +346,7 @@ def _create_imported_general_skill(
             "general_skill",
             row.id,
             "active" if status == "published" else "inactive",
+            metadata_json=row.metadata_json or {},
         )
     else:
         ensure_open_gallery_binding(
@@ -351,6 +355,7 @@ def _create_imported_general_skill(
             "general_skill",
             row.id,
             "active" if status == "published" else "inactive",
+            metadata_json=row.metadata_json or {},
         )
     db.commit()
     db.refresh(row)
@@ -429,7 +434,13 @@ def publish_general_skill(
     agent_id = _agent_id_or_none(agent_id)
     agent = ensure_agent_scope_manager(db, tenant_id, agent_id, current_user)
     if agent and not agent.is_overall:
-        binding = _ensure_general_skill_binding(db, tenant_id, agent.id, row.id)
+        binding = _ensure_general_skill_binding(
+            db,
+            tenant_id,
+            agent.id,
+            row.id,
+            metadata_json=user_creator_metadata(current_user, row.metadata_json or {}),
+        )
         binding.status = "active"
         binding.updated_at = utc_now()
         db.add(binding)
@@ -437,11 +448,18 @@ def publish_general_skill(
         return general_skill_read(row, status_override="published")
     ensure_open_gallery_admin(tenant_id, current_user)
     row.status = "published"
-    mark_resource_open_gallery(row)
+    mark_resource_open_gallery(row, row.metadata_json or {})
     row.updated_at = utc_now()
     db.add(row)
     db.flush()
-    ensure_open_gallery_binding(db, tenant_id, "general_skill", row.id, "active")
+    ensure_open_gallery_binding(
+        db,
+        tenant_id,
+        "general_skill",
+        row.id,
+        "active",
+        metadata_json=row.metadata_json or {},
+    )
     db.commit()
     db.refresh(row)
     return general_skill_read(row)
@@ -597,6 +615,7 @@ def _ensure_general_skill_binding(
     tenant_id: str,
     agent_id: str,
     general_skill_id: str,
+    metadata_json: dict[str, object] | None = None,
 ) -> AgentResourceBinding:
     row = db.exec(
         select(AgentResourceBinding).where(
@@ -606,13 +625,17 @@ def _ensure_general_skill_binding(
             AgentResourceBinding.resource_id == general_skill_id,
         )
     ).first()
+    metadata = {
+        **(metadata_json or {}),
+        "scope": "agent_private",
+        "visibility": "agent_private",
+        "owner_agent_id": agent_id,
+        "created_from_agent": True,
+    }
     if row:
         row.metadata_json = {
             **(row.metadata_json or {}),
-            "scope": "agent_private",
-            "visibility": "agent_private",
-            "owner_agent_id": agent_id,
-            "created_from_agent": True,
+            **metadata,
         }
         return row
     row = AgentResourceBinding(
@@ -621,12 +644,7 @@ def _ensure_general_skill_binding(
         resource_type="general_skill",
         resource_id=general_skill_id,
         status="active",
-        metadata_json={
-            "scope": "agent_private",
-            "visibility": "agent_private",
-            "owner_agent_id": agent_id,
-            "created_from_agent": True,
-        },
+        metadata_json=metadata,
     )
     db.add(row)
     db.flush()

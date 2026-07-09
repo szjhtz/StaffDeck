@@ -28,6 +28,7 @@ from app.agents.branching import (
     rollback_branch,
     system_creator_metadata,
     update_branch_skill,
+    user_creator_metadata,
     visible_skill_rows,
 )
 from app.async_jobs import enqueue_async_job
@@ -211,6 +212,7 @@ def create_skill(
     db.flush()
     branch = None
     binding_status = "active" if request.status == "published" else "inactive"
+    creator_metadata = user_creator_metadata(current_user)
     if agent and not agent.is_overall:
         ensure_private_resource_binding(
             db,
@@ -219,17 +221,25 @@ def create_skill(
             "skill",
             row.id,
             binding_status,
+            metadata_json=creator_metadata,
         )
-        branch = ensure_agent_skill_branch(db, request.tenant_id, agent.id, row)
+        branch = ensure_agent_skill_branch(
+            db,
+            request.tenant_id,
+            agent.id,
+            row,
+            metadata_json=creator_metadata,
+        )
     else:
         ensure_open_gallery_admin(request.tenant_id, current_user)
-        mark_resource_open_gallery(row)
+        mark_resource_open_gallery(row, creator_metadata)
         ensure_open_gallery_binding(
             db,
             request.tenant_id,
             "skill",
             row.id,
             binding_status,
+            metadata_json=creator_metadata,
         )
     db.commit()
     db.refresh(row)

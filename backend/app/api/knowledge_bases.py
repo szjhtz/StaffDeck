@@ -22,6 +22,7 @@ from app.agents.branching import (
     rollback_knowledge_branch,
     sync_knowledge_branch_from_overall,
     system_creator_metadata,
+    user_creator_metadata,
 )
 from app.db.models import (
     AgentKnowledgeBranch,
@@ -147,21 +148,35 @@ def create_knowledge_base(
     agent = ensure_agent_scope_manager(db, request.tenant_id, agent_id, current_user)
     if not (agent and not agent.is_overall):
         ensure_open_gallery_admin(request.tenant_id, current_user)
+    creator_metadata = user_creator_metadata(current_user, request.metadata)
     row = KnowledgeBase(
         tenant_id=request.tenant_id,
         name=name,
         description=request.description,
-        metadata_json=request.metadata,
+        metadata_json=creator_metadata,
         status="active",
     )
     db.add(row)
     db.flush()
     if agent and not agent.is_overall:
-        mark_resource_private_for_agent(row, agent.id)
-        ensure_agent_private_knowledge_branch(db, request.tenant_id, agent.id, row)
+        mark_resource_private_for_agent(row, agent.id, creator_metadata)
+        ensure_agent_private_knowledge_branch(
+            db,
+            request.tenant_id,
+            agent.id,
+            row,
+            metadata_json=creator_metadata,
+        )
     else:
-        mark_resource_open_gallery(row)
-        ensure_open_gallery_binding(db, request.tenant_id, "knowledge_base", row.id, "active")
+        mark_resource_open_gallery(row, creator_metadata)
+        ensure_open_gallery_binding(
+            db,
+            request.tenant_id,
+            "knowledge_base",
+            row.id,
+            "active",
+            metadata_json=creator_metadata,
+        )
     db.commit()
     db.refresh(row)
     return knowledge_base_read(row, {}, version_row=ensure_knowledge_base_version(db, row))
@@ -658,7 +673,13 @@ def _writable_knowledge_version(
     _get_knowledge_base(db, tenant_id, knowledge_base_id)
     agent = ensure_agent_scope_manager(db, tenant_id, agent_id, current_user)
     if agent and not agent.is_overall:
-        version = knowledge_version_for_upload(db, tenant_id, knowledge_base_id, agent.id)
+        version = knowledge_version_for_upload(
+            db,
+            tenant_id,
+            knowledge_base_id,
+            agent.id,
+            metadata_json=user_creator_metadata(current_user),
+        )
         db.commit()
         return version
     ensure_open_gallery_admin(tenant_id, current_user)

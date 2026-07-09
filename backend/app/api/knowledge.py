@@ -19,6 +19,7 @@ from app.agents.branching import (
     knowledge_version_for_upload,
     mark_resource_open_gallery,
     mark_resource_private_for_agent,
+    user_creator_metadata,
     visible_knowledge_base_versions,
     visible_knowledge_base_version_ids,
 )
@@ -69,8 +70,21 @@ def upload_document(
     current_user: User = Depends(get_current_user),
 ) -> KnowledgeIngestJobRead:
     ensure_tenant(db, request.tenant_id)
-    knowledge_base = _resolve_upload_knowledge_base(db, request, agent_id, current_user)
-    version = knowledge_version_for_upload(db, request.tenant_id, knowledge_base.id, agent_id)
+    creator_metadata = user_creator_metadata(current_user, request.metadata or {})
+    knowledge_base = _resolve_upload_knowledge_base(
+        db,
+        request,
+        agent_id,
+        current_user,
+        creator_metadata=creator_metadata,
+    )
+    version = knowledge_version_for_upload(
+        db,
+        request.tenant_id,
+        knowledge_base.id,
+        agent_id,
+        metadata_json=creator_metadata,
+    )
     db.commit()
     service = KnowledgeService(db)
     job = service.create_ingest_job(
@@ -81,7 +95,7 @@ def upload_document(
             filename=request.filename,
             content_base64=request.content_base64,
             title=request.title,
-            metadata=request.metadata,
+            metadata=creator_metadata,
         )
     )
     enqueue_async_job(
@@ -116,8 +130,21 @@ def import_okf_bundle(
         content_base64="",
         metadata={"okf_import": True, "source_filename": request.filename},
     )
-    knowledge_base = _resolve_upload_knowledge_base(db, upload_request, request.agent_id, current_user)
-    version = knowledge_version_for_upload(db, request.tenant_id, knowledge_base.id, request.agent_id)
+    creator_metadata = user_creator_metadata(current_user, upload_request.metadata or {})
+    knowledge_base = _resolve_upload_knowledge_base(
+        db,
+        upload_request,
+        request.agent_id,
+        current_user,
+        creator_metadata=creator_metadata,
+    )
+    version = knowledge_version_for_upload(
+        db,
+        request.tenant_id,
+        knowledge_base.id,
+        request.agent_id,
+        metadata_json=creator_metadata,
+    )
     document = KnowledgeDocument(
         tenant_id=request.tenant_id,
         knowledge_base_id=knowledge_base.id,
@@ -127,6 +154,7 @@ def import_okf_bundle(
         title=Path(request.filename).stem or request.filename,
         status="processing",
         metadata_json={
+            **creator_metadata,
             "okf_import": True,
             "document_card": {
                 "title": Path(request.filename).stem or request.filename,
@@ -183,6 +211,7 @@ def _resolve_upload_knowledge_base(
     request: KnowledgeDocumentUploadRequest,
     agent_id: str | None,
     current_user: object | None = None,
+    creator_metadata: dict[str, Any] | None = None,
 ) -> KnowledgeBase:
     agent = ensure_agent_scope_manager(db, request.tenant_id, agent_id, current_user)
     if request.knowledge_base_id:
@@ -207,7 +236,7 @@ def _resolve_upload_knowledge_base(
         description=f"由文档 {request.filename} 创建",
         status="active",
         metadata_json={
-            **(request.metadata or {}),
+            **(creator_metadata or user_creator_metadata(current_user, request.metadata or {})),
             "created_from_document_upload": True,
             "source_filename": request.filename,
         },
@@ -216,11 +245,24 @@ def _resolve_upload_knowledge_base(
     db.flush()
 
     if agent and not agent.is_overall:
-        mark_resource_private_for_agent(knowledge_base, agent.id)
-        ensure_agent_private_knowledge_branch(db, request.tenant_id, agent.id, knowledge_base)
+        mark_resource_private_for_agent(knowledge_base, agent.id, creator_metadata)
+        ensure_agent_private_knowledge_branch(
+            db,
+            request.tenant_id,
+            agent.id,
+            knowledge_base,
+            metadata_json=creator_metadata,
+        )
     else:
-        mark_resource_open_gallery(knowledge_base)
-        ensure_open_gallery_binding(db, request.tenant_id, "knowledge_base", knowledge_base.id, "active")
+        mark_resource_open_gallery(knowledge_base, creator_metadata)
+        ensure_open_gallery_binding(
+            db,
+            request.tenant_id,
+            "knowledge_base",
+            knowledge_base.id,
+            "active",
+            metadata_json=creator_metadata,
+        )
     return knowledge_base
 
 
