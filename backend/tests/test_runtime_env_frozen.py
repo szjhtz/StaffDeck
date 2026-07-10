@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from app import paths
 from app.general_skills import runtime_env
 

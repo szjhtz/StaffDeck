@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from app import paths
 from app.db.models import ChatSession, ModelConfig, Skill, Tool
 from app.llm import LLMClient, LLMError

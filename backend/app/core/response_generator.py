@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
-from pathlib import Path
 
 from app import paths
 from app.db.models import ChatSession, ModelConfig, Skill
